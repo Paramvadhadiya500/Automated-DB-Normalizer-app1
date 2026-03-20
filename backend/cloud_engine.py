@@ -110,3 +110,37 @@ def execute_on_rds(host, sql_command, db_instance_id):
         return {"status": "success", "message": "Tables securely created on AWS RDS!"}
     except Exception as e:
         return {"status": "error", "message": f"Cloud SQL Error: {str(e)}"}
+    
+    # --- NEW: DYNAMODB (NoSQL) ENGINE FUNCTIONS ---
+
+def create_dynamodb_table(table_name):
+    """Creates a Serverless NoSQL Table in the Free Tier"""
+    try:
+        dynamodb = boto3.client('dynamodb', region_name='ap-south-1')
+        # We create a generic Partition Key called 'id' to start.
+        response = dynamodb.create_table(
+            TableName=table_name,
+            KeySchema=[{'AttributeName': 'id', 'KeyType': 'HASH'}],
+            AttributeDefinitions=[{'AttributeName': 'id', 'AttributeType': 'S'}],
+            BillingMode='PAY_PER_REQUEST' # <--- This guarantees it stays in the Free Tier!
+        )
+        return {"status": "success", "message": f"DynamoDB Table '{table_name}' is provisioning for FREE!"}
+    except Exception as e:
+        return {"status": "error", "message": f"AWS Error: {str(e)}"}
+
+def check_dynamodb_status(table_name):
+    try:
+        dynamodb = boto3.client('dynamodb', region_name='ap-south-1')
+        response = dynamodb.describe_table(TableName=table_name)
+        status = response['Table']['TableStatus']
+        return {"status": status.lower(), "endpoint": f"arn:aws:dynamodb:ap-south-1:table/{table_name}"}
+    except Exception as e:
+        return {"error": f"Table '{table_name}' not found."}
+
+def delete_dynamodb_table(table_name):
+    try:
+        dynamodb = boto3.client('dynamodb', region_name='ap-south-1')
+        dynamodb.delete_table(TableName=table_name)
+        return {"status": "success", "message": f"DynamoDB Table '{table_name}' destroyed!"}
+    except Exception as e:
+        return {"status": "error", "message": f"AWS Error: {str(e)}"}

@@ -1,25 +1,24 @@
-# 🚀 Automated Database Normalizer & Architecture Sandbox
+# ☁️ Enterprise Cloud Architect Center
 
-A full-stack, algorithmic architecture tool that allows developers to visually map out relational database schemas and automatically validates them against strict DBMS normalization rules (1NF, 2NF, 3NF). Passing schemas can be instantly compiled and deployed to a local, in-memory SQLite sandbox.
+A full-stack, interactive Database-as-a-Service (DBaaS) platform that allows developers to visually design, validate, and instantly provision multi-model AWS databases (SQL & NoSQL) without writing infrastructure code.
 
-## ✨ Core Features
-* **Visual ERD Canvas:** Drag-and-drop interface to build tables, define columns, and map primary/foreign keys.
-* **Algorithmic Validation Engine:** A Python backend that mathematically analyzes schemas for partial and transitive dependencies to ensure 3NF compliance.
-* **Instant Sandbox Deployment:** Dynamically translates valid JSON schemas into `CREATE TABLE` SQL scripts and spins up an isolated SQLite database in memory.
-* **Export to SQL:** Download the generated production-ready `.sql` files directly to your local machine.
+## 🚀 Key Features
+
+* **Multi-Model Support:** Toggle seamlessly between Relational (SQL) and Document (NoSQL) database architectures.
+* **Visual Schema Builder:** Drag-and-drop React Flow canvas to design tables, define foreign keys, and map DynamoDB access patterns.
+* **Automated Normalization Engine:** Python backend runs mathematical validation (1NF, 2NF, 3NF) on SQL schemas before allowing deployment.
+* **One-Click AWS Provisioning:** Uses `boto3` to instantly spin up Amazon RDS (PostgreSQL/MySQL) or DynamoDB tables in the `ap-south-1` region.
+* **Infrastructure as Code (IaC) Export:** Automatically generates production-ready `.tf` (Terraform) scripts based on the visual design.
+* **Local Sandbox:** Test SQL schemas locally using an in-memory SQLite deployment.
 
 ## 🛠️ Tech Stack
-* **Frontend:** React, Vite, React Flow (Custom Stateful Nodes)
-* **Backend:** Python, FastAPI
-* **Database Engine:** SQLite (In-Memory)
-* **API Communication:** RESTful endpoints with strict CORS management
 
-## 🚀 How to Run Locally
+* **Frontend:** React.js, React Flow, HTML-to-Image
+* **Backend:** Python, FastAPI, Pydantic (Data Validation)
+* **Cloud & DevOps:** AWS RDS, AWS DynamoDB, Boto3 (AWS SDK), Terraform
 
-### 1. Start the Python Backend
-```bash
-cd database-api
-python -m venv venv
-# Activate the environment (Windows: .\venv\Scripts\activate | Mac/Linux: source venv/bin/activate)
-pip install -r requirements.txt
-uvicorn main:app --reload
+## 🧠 Architecture Flow
+
+1.  **Design:** User defines schema visually in the React frontend.
+2.  **Validate:** FastAPI receives the JSON payload and routes it to the correct rulebook (SQL Normalization vs. NoSQL Key Validation).
+3.  **Deploy:** The Python Cloud Engine executes Boto3 commands to provision the requested resources securely on AWS.

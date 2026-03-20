@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 
-const CloudDashboard = () => {
+// 🆕 Accept the dbMode from the master toggle
+const CloudDashboard = ({ dbMode }) => {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [dbInfo, setDbInfo] = useState(null);
@@ -9,17 +10,20 @@ const CloudDashboard = () => {
   const [vpcId, setVpcId] = useState(""); 
   const [dbEngine, setDbEngine] = useState("postgres");
 
+  // 🆕 SMART ENGINE ROUTER: Automatically override if in DynamoDB mode!
+  const actualEngine = dbMode === 'dynamodb' ? 'dynamodb' : dbEngine;
+
   const deployToAWS = async () => {
     setLoading(true);
-    setStatus(null); // Clear old status
+    setStatus(null); 
     
-    // THE 422 FIX: We build the payload dynamically.
-    // If VPC is empty, we completely remove it from the package so Python doesn't complain!
     const payload = {
       db_name: dbName,
-      db_engine: dbEngine
+      db_engine: actualEngine // Uses the smart override
     };
-    if (vpcId.trim() !== "") {
+    
+    // Only send VPC ID if we are using SQL
+    if (dbMode === 'sql' && vpcId.trim() !== "") {
       payload.vpc_sg_id = vpcId.trim();
     }
 
@@ -27,10 +31,9 @@ const CloudDashboard = () => {
       const response = await fetch('http://localhost:8000/deploy-to-aws', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload) // Send the clean package
+        body: JSON.stringify(payload) 
       });
       
-      // If the backend still throws a 422, let's catch it gracefully without crashing
       if (!response.ok) {
         setStatus(`Server Error: ${response.status}`);
         setLoading(false);
@@ -47,8 +50,7 @@ const CloudDashboard = () => {
 
   const checkStatus = async () => {
     try {
-      // THE FIX: We add ?db_name=${dbName} to the end of the URL
-      const response = await fetch(`http://localhost:8000/check-aws-status?db_name=${dbName}`);
+      const response = await fetch(`http://localhost:8000/check-aws-status?db_name=${dbName}&db_engine=${actualEngine}`);
       const data = await response.json();
       setDbInfo(data);
     } catch (error) {
@@ -60,8 +62,7 @@ const CloudDashboard = () => {
     if (!window.confirm(`⚠️ Are you sure? This will PERMANENTLY delete ${dbName}!`)) return;
     setLoading(true);
     try {
-      // THE FIX: We add ?db_name=${dbName} here too!
-      const response = await fetch(`http://localhost:8000/delete-aws-db?db_name=${dbName}`, { method: 'DELETE' });
+      const response = await fetch(`http://localhost:8000/delete-aws-db?db_name=${dbName}&db_engine=${actualEngine}`, { method: 'DELETE' });
       const data = await response.json();
       setStatus(data.message);
       setDbInfo(null); 
@@ -76,7 +77,7 @@ const CloudDashboard = () => {
       const response = await fetch('http://localhost:8000/api/cloud/terraform', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ db_name: dbName, db_engine: dbEngine })
+        body: JSON.stringify({ db_name: dbName, db_engine: actualEngine })
       });
       const data = await response.json();
       
@@ -94,9 +95,10 @@ const CloudDashboard = () => {
     }
   };
 
+  // UI dynamically changes color based on SQL vs DynamoDB
   return (
-    <div style={{ padding: '20px', border: '2px solid #3b82f6', borderRadius: '10px', marginTop: '20px', backgroundColor: '#eff6ff', position: 'relative' }}>
-      <h2 style={{ color: '#1e3a8a', marginTop: 0 }}>☁️ Enterprise Cloud Architect Center</h2>
+    <div style={{ padding: '20px', border: `2px solid ${dbMode === 'dynamodb' ? '#8b5cf6' : '#3b82f6'}`, borderRadius: '10px', marginTop: '20px', backgroundColor: dbMode === 'dynamodb' ? '#f3e8ff' : '#eff6ff', position: 'relative' }}>
+      <h2 style={{ color: dbMode === 'dynamodb' ? '#4c1d95' : '#1e3a8a', marginTop: 0 }}>☁️ Enterprise Cloud Architect Center</h2>
       
       <div style={{ display: 'flex', gap: '15px', marginBottom: '15px', alignItems: 'center', flexWrap: 'wrap' }}>
         
@@ -105,31 +107,40 @@ const CloudDashboard = () => {
           <input type="text" value={dbName} onChange={(e) => setDbName(e.target.value)} style={{ padding: '8px', borderRadius: '5px', border: '1px solid #cbd5e1', width: '200px', fontSize: '13px' }} />
         </div>
 
-        <div>
-          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', color: '#475569' }}>Engine:</label>
-          <select value={dbEngine} onChange={(e) => setDbEngine(e.target.value)} style={{ padding: '8px', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '13px', backgroundColor: 'white', color: 'black' }}>
-            <option value="postgres">PostgreSQL</option>
-            <option value="mysql">MySQL</option>
-            <option value="mariadb">MariaDB</option>
-          </select>
-        </div>
+        {/* 🆕 ONLY SHOW SQL DROPDOWNS IF IN SQL MODE */}
+        {dbMode === 'sql' ? (
+          <>
+            <div>
+              <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', color: '#475569' }}>Engine:</label>
+              <select value={dbEngine} onChange={(e) => setDbEngine(e.target.value)} style={{ padding: '8px', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '13px', backgroundColor: 'white', color: 'black' }}>
+                <option value="postgres">PostgreSQL</option>
+                <option value="mysql">MySQL</option>
+                <option value="mariadb">MariaDB</option>
+              </select>
+            </div>
 
-        <div>
-          <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', color: '#475569' }}>VPC Security Group (Optional):</label>
-          <input type="text" placeholder="sg-..." value={vpcId} onChange={(e) => setVpcId(e.target.value)} style={{ padding: '8px', borderRadius: '5px', border: '1px solid #cbd5e1', width: '200px', fontSize: '13px' }} />
-        </div>
+            <div>
+              <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', color: '#475569' }}>VPC Security Group (Optional):</label>
+              <input type="text" placeholder="sg-..." value={vpcId} onChange={(e) => setVpcId(e.target.value)} style={{ padding: '8px', borderRadius: '5px', border: '1px solid #cbd5e1', width: '200px', fontSize: '13px' }} />
+            </div>
+          </>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', padding: '8px 12px', backgroundColor: '#8b5cf6', color: 'white', borderRadius: '5px', fontSize: '13px', fontWeight: 'bold' }}>
+            ⚡ Serverless NoSQL Mode Active
+          </div>
+        )}
       </div>
       
       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-        <button onClick={deployToAWS} disabled={loading} style={{ padding: '10px 15px', backgroundColor: '#f59e0b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
-          {loading ? "🚀 Provisioning..." : `🚀 Deploy ${dbEngine.toUpperCase()}`}
+        <button onClick={deployToAWS} disabled={loading} style={{ padding: '10px 15px', backgroundColor: dbMode === 'dynamodb' ? '#8b5cf6' : '#f59e0b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+          {loading ? "🚀 Provisioning..." : `🚀 Deploy ${dbMode === 'dynamodb' ? 'DYNAMODB' : dbEngine.toUpperCase()}`}
         </button>
 
         <button onClick={checkStatus} style={{ padding: '10px 15px', backgroundColor: '#1e293b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
           🔄 Refresh Status
         </button>
 
-        <button onClick={downloadTerraform} style={{ padding: '10px 15px', backgroundColor: '#8b5cf6', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+        <button onClick={downloadTerraform} style={{ padding: '10px 15px', backgroundColor: '#64748b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
           🏗️ Export Terraform (.tf)
         </button>
 
@@ -140,16 +151,19 @@ const CloudDashboard = () => {
 
       {status && <p style={{ marginTop: '15px', color: status.includes('Error') ? '#ef4444' : '#166534', fontWeight: 'bold' }}>{status}</p>}
 
-      {/* THE REACT CRASH FIX: Safely check if dbInfo.status exists before uppercasing it */}
       {dbInfo && (
         <div style={{ marginTop: '15px', fontSize: '14px', textAlign: 'left', backgroundColor: 'white', padding: '15px', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
           {dbInfo.error ? (
             <p style={{ margin: 0, color: '#ef4444', fontWeight: 'bold' }}>Error: {dbInfo.error}</p>
           ) : (
             <>
-              <p style={{ margin: '0 0 5px 0' }}><strong>AWS Status:</strong> <span style={{ color: dbInfo.status === 'available' ? '#10b981' : '#f59e0b' }}>{dbInfo.status ? dbInfo.status.toUpperCase() : 'UNKNOWN'}</span></p>
-              <p style={{ margin: '0 0 5px 0' }}><strong>Endpoint:</strong> {dbInfo.endpoint || 'Not ready yet'}</p>
-              <p style={{ margin: 0, fontSize: '12px', color: '#64748b' }}>🔒 Password generated and encrypted via AWS Systems Manager.</p>
+              <p style={{ margin: '0 0 5px 0' }}><strong>AWS Status:</strong> <span style={{ color: dbInfo.status === 'available' || dbInfo.status === 'active' ? '#10b981' : '#f59e0b' }}>{dbInfo.status ? dbInfo.status.toUpperCase() : 'UNKNOWN'}</span></p>
+              <p style={{ margin: '0 0 5px 0' }}><strong>Endpoint/ARN:</strong> {dbInfo.endpoint || 'Not ready yet'}</p>
+              {dbMode === 'sql' ? (
+                 <p style={{ margin: 0, fontSize: '12px', color: '#64748b' }}>🔒 Password generated and encrypted via AWS Systems Manager.</p>
+              ) : (
+                 <p style={{ margin: 0, fontSize: '12px', color: '#64748b' }}>⚡ Serverless Table: Pay-Per-Request enabled.</p>
+              )}
             </>
           )}
         </div>
