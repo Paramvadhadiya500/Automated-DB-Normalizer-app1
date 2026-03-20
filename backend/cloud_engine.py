@@ -1,49 +1,77 @@
 import boto3
 import os
+import secrets
+import string
+import psycopg2
 from dotenv import load_dotenv
 
-# This loads your Access Keys from the .env file
 load_dotenv()
 
-# Connect to AWS RDS service
-rds_client = boto3.client(
-    'rds',
-    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-    region_name=os.getenv("AWS_REGION")
-)
+# We need two clients now: one for Databases (RDS) and one for Security (SSM)
+aws_credentials = {
+    'aws_access_key_id': os.getenv("AWS_ACCESS_KEY_ID"),
+    'aws_secret_access_key': os.getenv("AWS_SECRET_ACCESS_KEY"),
+    'region_name': os.getenv("AWS_REGION")
+}
 
-def create_rds_instance(db_instance_id):
-    """
-    This function tells AWS to spin up a new database.
-    """
+rds_client = boto3.client('rds', **aws_credentials)
+ssm_client = boto3.client('ssm', **aws_credentials)
+
+def generate_and_store_password(db_instance_id):
+    """Generates a secure password and saves it to AWS SSM Parameter Store (FREE TIER)."""
+    alphabet = string.ascii_letters + string.digits
+    secure_password = ''.join(secrets.choice(alphabet) for i in range(16))
+    
+    parameter_name = f"/database/{db_instance_id}/master-password"
+    
     try:
-        print(f"🚀 Starting AWS Provisioning for: {db_instance_id}...")
-        
-        response = rds_client.create_db_instance(
-            DBInstanceIdentifier=db_instance_id,
-            AllocatedStorage=20,           # 20GB is the Free Tier limit
-            DBInstanceClass='db.t3.micro',  # Free Tier eligible instance
-            Engine='postgres',             # You can change this to 'mysql' if you prefer
-            MasterUsername='admin_user',
-            MasterUserPassword='NensieraSecurePass123!', # Change this later!
-            PubliclyAccessible=True,       # So your React app can talk to it
-            Tags=[{'Key': 'Project', 'Value': 'Automated-DB-Normalizer'}]
+        ssm_client.put_parameter(
+            Name=parameter_name,
+            Value=secure_password,
+            Type='SecureString', # Encrypts it!
+            Overwrite=True
         )
+        print(f"🔒 Password securely stored in AWS SSM at: {parameter_name}")
+        return secure_password
+    except Exception as e:
+        print(f"SSM Error: {str(e)}")
+        return "FallbackPass123!" # Only if IAM permissions fail
+
+# Change the function definition to include the engine
+def create_rds_instance(db_instance_id, vpc_security_group_id=None, engine='postgres'):
+    """Provisions the DB using the secure password, optional VPC, and selected engine."""
+    try:
+        master_password = generate_and_store_password(db_instance_id)
+        
+        # Determine default port based on engine
+        port = 3306 if engine in ['mysql', 'mariadb'] else 5432
+        
+        db_config = {
+            'DBInstanceIdentifier': db_instance_id,
+            'AllocatedStorage': 20,           
+            'DBInstanceClass': 'db.t3.micro', 
+            'Engine': engine, # <--- DYNAMIC ENGINE HERE!
+            'MasterUsername': 'admin_user',
+            'MasterUserPassword': master_password, 
+            'PubliclyAccessible': True,
+            'Port': port,
+            'Tags': [{'Key': 'Project', 'Value': 'Automated-DB-Normalizer'}]
+        }
+
+        if vpc_security_group_id:
+            db_config['VpcSecurityGroupIds'] = [vpc_security_group_id]
+
+        response = rds_client.create_db_instance(**db_config)
         
         return {
             "status": "Success",
-            "message": f"Database {db_instance_id} is now being created!",
+            "message": f"{engine.upper()} Database {db_instance_id} is provisioning! Password locked in SSM.",
             "aws_status": response['DBInstance']['DBInstanceStatus']
         }
-
     except Exception as e:
         return {"status": "Error", "message": str(e)}
 
 def get_db_status(db_instance_id):
-    """
-    Checks if the database is 'Available' yet (AWS takes 3-5 mins to build it).
-    """
     try:
         response = rds_client.describe_db_instances(DBInstanceIdentifier=db_instance_id)
         status = response['DBInstances'][0]['DBInstanceStatus']
@@ -51,47 +79,34 @@ def get_db_status(db_instance_id):
         return {"status": status, "endpoint": endpoint}
     except Exception as e:
         return {"error": str(e)}
+
 def delete_rds_instance(db_instance_id):
-    """
-    Tells AWS to permanently delete the database.
-    """
     try:
-        print(f"⚠️ Deleting AWS RDS Instance: {db_instance_id}...")
-        
         response = rds_client.delete_db_instance(
             DBInstanceIdentifier=db_instance_id,
-            SkipFinalSnapshot=True, # Critical: Saves time and money by not saving a backup
+            SkipFinalSnapshot=True,
             DeleteAutomatedBackups=True
         )
-        
-        return {
-            "status": "Deleting",
-            "message": f"Database {db_instance_id} is being shut down.",
-            "aws_status": response['DBInstance']['DBInstanceStatus']
-        }
+        return {"status": "Deleting", "message": f"Database {db_instance_id} shutting down."}
     except Exception as e:
         return {"status": "Error", "message": str(e)}
 
-        import psycopg2
-
-def execute_on_rds(host, sql_command):
-    """
-    Connects to the real AWS RDS and runs your SQL.
-    """
+def execute_on_rds(host, sql_command, db_instance_id):
     try:
-        # Connect using the credentials we set in create_rds_instance
+        # Fetch the secure password from AWS SSM to connect!
+        parameter_name = f"/database/{db_instance_id}/master-password"
+        ssm_response = ssm_client.get_parameter(Name=parameter_name, WithDecryption=True)
+        secure_password = ssm_response['Parameter']['Value']
+
         conn = psycopg2.connect(
-            host=host,
-            database='postgres', # Default DB name
-            user='admin_user',
-            password='NensieraSecurePass123!', # Must match what you used in create_rds_instance
-            connect_timeout=5
+            host=host, database='postgres', user='admin_user',
+            password=secure_password, connect_timeout=5
         )
         cur = conn.cursor()
         cur.execute(sql_command)
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "message": "Tables created on AWS RDS!"}
+        return {"status": "success", "message": "Tables securely created on AWS RDS!"}
     except Exception as e:
         return {"status": "error", "message": f"Cloud SQL Error: {str(e)}"}

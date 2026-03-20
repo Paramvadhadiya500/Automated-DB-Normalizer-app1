@@ -21,7 +21,6 @@ const cafeTemplateEdges = [
 ];
 
 export default function App() {
-  const [loading, setLoading] = useState(false);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   
@@ -67,7 +66,50 @@ export default function App() {
     });
   };
 
-  // --- DYNAMIC FUNCTIONS ---
+  // --- 🆕 DYNAMIC EDITING FUNCTIONS ---
+
+  // 1. Rename Table
+  const updateTableName = (newName) => {
+    setNodes((nds) => nds.map((node) => {
+      if (node.id === selectedNodeId) {
+        return { 
+          ...node, 
+          data: { 
+            ...node.data, 
+            label: newName, 
+            schema: { ...node.data.schema, name: newName } 
+          } 
+        };
+      }
+      return node;
+    }));
+  };
+
+  // 2. Delete Single Column
+  const deleteColumn = (colNameToRemove) => {
+    setNodes((nds) => nds.map((node) => {
+      if (node.id === selectedNodeId) {
+        const updatedColumns = node.data.schema.columns.filter(col => col.name !== colNameToRemove);
+        return { ...node, data: { ...node.data, schema: { ...node.data.schema, columns: updatedColumns } } };
+      }
+      return node;
+    }));
+  };
+
+  // 3. Delete Entire Table
+  const deleteTable = () => {
+    if (!window.confirm(`⚠️ Are you sure you want to delete the table '${selectedNode.data.label}'?`)) return;
+    
+    // Remove the node
+    setNodes((nds) => nds.filter((node) => node.id !== selectedNodeId));
+    // Remove any edges connected to this node
+    setEdges((eds) => eds.filter((edge) => edge.source !== selectedNodeId && edge.target !== selectedNodeId));
+    
+    closePanel();
+  };
+
+  // -----------------------------------
+
   const addColumn = () => {
     if (!newColName) return;
     setNodes((nds) => nds.map((node) => {
@@ -78,6 +120,7 @@ export default function App() {
       return node;
     }));
     setNewColName(""); 
+    setIsPk(false); // Reset PK checkbox after adding
   };
 
   const addDependency = () => {
@@ -89,6 +132,8 @@ export default function App() {
       }
       return node;
     }));
+    setDetInput("");
+    setDepInput("");
   };
 
   const addNewTable = () => {
@@ -145,7 +190,7 @@ export default function App() {
     <div style={{ width: '100vw', height: '100vh', backgroundColor: '#f8fafc', position: 'relative', overflow: 'hidden' }}>
       <CloudDashboard />  
       
-      {/* Floating Top Menu (UPGRADED) */}
+      {/* Floating Top Menu */}
       <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 10, display: 'flex', gap: '10px', backgroundColor: 'white', padding: '10px', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
         <button onClick={addNewTable} style={{ padding: '8px 16px', backgroundColor: '#8b5cf6', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
           + Create New Table
@@ -154,48 +199,64 @@ export default function App() {
           ☕ Load Cafe Template
         </button>
         <button onClick={exportImage} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
-          📸 Export Architecture Diagram
+          📸 Export Diagram
         </button>
       </div>
       
       {/* Side Panel */}
       {isPanelOpen && selectedNode && (
         <div style={{ position: 'absolute', right: 0, top: 0, width: '400px', height: '100vh', backgroundColor: 'white', boxShadow: '-4px 0 15px rgba(0,0,0,0.1)', zIndex: 20, padding: '30px', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
-          <h2 style={{ marginTop: 0, color: '#0f172a' }}>{selectedNode.data.label}</h2>
           
-          <div style={{ marginBottom: '20px', backgroundColor: '#f8fafc', padding: '10px', borderRadius: '8px' }}>
+          {/* 🆕 Editable Table Name */}
+          <input 
+            value={selectedNode.data.label} 
+            onChange={(e) => updateTableName(e.target.value)}
+            style={{ fontSize: '24px', fontWeight: 'bold', border: 'none', borderBottom: '2px solid #3b82f6', marginBottom: '20px', color: '#0f172a', padding: '5px', outline: 'none', width: '100%' }}
+            title="Click to rename table"
+          />
+          
+          <div style={{ marginBottom: '20px', backgroundColor: '#f8fafc', padding: '15px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
             <h4 style={{ margin: '0 0 10px 0', color: '#475569' }}>Current Schema:</h4>
+            
+            {/* Columns List with 🆕 Delete Buttons */}
             {selectedNode.data.schema.columns.map(col => (
-              <div key={col.name} style={{ fontSize: '13px', padding: '2px 0' }}>
-                • {col.name} ({col.data_type}) {col.is_primary_key && <span style={{ color: '#eab308', fontWeight: 'bold' }}>[PK]</span>}
+              <div key={col.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', padding: '4px 0', borderBottom: '1px solid #f1f5f9' }}>
+                <span>
+                  • {col.name} <span style={{ color: '#64748b' }}>({col.data_type})</span> {col.is_primary_key && <span style={{ color: '#eab308', fontWeight: 'bold' }}>[PK]</span>}
+                </span>
+                <button 
+                  onClick={() => deleteColumn(col.name)}
+                  style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', padding: '0 5px' }}
+                  title="Delete Column"
+                >
+                  ❌
+                </button>
               </div>
             ))}
-            {selectedNode.data.schema.dependencies.map((dep, i) => (
-               <div key={i} style={{ fontSize: '13px', padding: '2px 0', color: '#64748b' }}>↳ {dep.determinants[0]} ➔ {dep.dependents[0]}</div>
-            ))}
+
+            {/* Dependencies */}
+            {selectedNode.data.schema.dependencies.length > 0 && (
+              <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px dashed #cbd5e1' }}>
+                <h5 style={{ margin: '0 0 5px 0', color: '#64748b' }}>Dependencies:</h5>
+                {selectedNode.data.schema.dependencies.map((dep, i) => (
+                   <div key={i} style={{ fontSize: '13px', padding: '2px 0', color: '#64748b' }}>↳ {dep.determinants[0]} ➔ {dep.dependents[0]}</div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div style={{ marginBottom: '20px', borderBottom: '1px solid #e2e8f0', paddingBottom: '15px' }}>
             <h4 style={{ margin: '0 0 10px 0', fontSize: '14px' }}>Add New Column</h4>
             <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-              <input value={newColName} onChange={(e) => setNewColName(e.target.value)} placeholder="Col Name" style={{ flex: 1, padding: '6px' }} />
-              <select value={newColType} onChange={(e) => setNewColType(e.target.value)} style={{ padding: '6px' }}>
+              <input value={newColName} onChange={(e) => setNewColName(e.target.value)} placeholder="Col Name" style={{ flex: 1, padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1' }} />
+              <select value={newColType} onChange={(e) => setNewColType(e.target.value)} style={{ padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1' }}>
                 <option>INT</option><option>VARCHAR</option><option>LIST</option>
               </select>
             </div>
             <label style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '10px' }}>
               <input type="checkbox" checked={isPk} onChange={(e) => setIsPk(e.target.checked)} /> Is Primary Key?
             </label>
-            <button onClick={addColumn} style={{ width: '100%', padding: '8px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>+ Add Column</button>
-          </div>
-
-          <div style={{ marginBottom: '20px' }}>
-            <h4 style={{ margin: '0 0 10px 0', fontSize: '14px' }}>Add Dependency</h4>
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-              <input value={detInput} onChange={(e) => setDetInput(e.target.value)} placeholder="Determinant (e.g., id)" style={{ flex: 1, padding: '6px' }} />
-              <input value={depInput} onChange={(e) => setDepInput(e.target.value)} placeholder="Dependent (e.g., name)" style={{ flex: 1, padding: '6px' }} />
-            </div>
-            <button onClick={addDependency} style={{ width: '100%', padding: '8px', backgroundColor: '#8b5cf6', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>+ Add Dependency</button>
+            <button onClick={addColumn} style={{ width: '100%', padding: '8px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>+ Add Column</button>
           </div>
 
           <button onClick={analyzeTable} style={{ width: '100%', padding: '12px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '20px' }}>Run Validation</button>
@@ -222,7 +283,16 @@ export default function App() {
             </div>
           )}
 
-          <button onClick={closePanel} style={{ marginTop: 'auto', padding: '12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Close Panel</button>
+          <div style={{ marginTop: 'auto', display: 'flex', gap: '10px' }}>
+            {/* 🆕 Delete Table Button */}
+            <button onClick={deleteTable} style={{ flex: 1, padding: '12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+              🗑️ Delete Table
+            </button>
+            <button onClick={closePanel} style={{ flex: 1, padding: '12px', backgroundColor: '#64748b', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+              Close Panel
+            </button>
+          </div>
+
         </div>
       )}
 

@@ -1,12 +1,15 @@
 # --- Security (CRITICAL) ---
 .env
+.env.*
 *.pem
 *.key
 
 # --- Python / Backend ---
 backend/venv/
+backend/env/
 backend/__pycache__/
 backend/*.db
+backend/*.sqlite3
 backend/*.log
 
 # --- React / Frontend ---
@@ -14,6 +17,9 @@ database-sandbox-ui/node_modules/
 database-sandbox-ui/dist/
 database-sandbox-ui/.env
 database-sandbox-ui/*.local
+database-sandbox-ui/npm-debug.log*
+database-sandbox-ui/yarn-debug.log*
+database-sandbox-ui/yarn-error.log*
 
 # --- System / Editors ---
 .vscode/

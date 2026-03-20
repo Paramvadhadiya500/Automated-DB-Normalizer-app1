@@ -2,11 +2,9 @@ import sqlite3
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List
-from cloud_engine import delete_rds_instance # Update your import at the top!
-# Import your new AWS Cloud Engine
-from cloud_engine import create_rds_instance, get_db_status
-from cloud_engine import execute_on_rds # Add to imports!
+from typing import List, Optional  # <--- Optional is the magic word that fixes the 422 error!
+
+from cloud_engine import create_rds_instance, get_db_status, delete_rds_instance, execute_on_rds
 
 app = FastAPI()
 
@@ -107,34 +105,15 @@ def deploy_to_sandbox(table: TableSchema):
     except Exception as e:
         return {"status": "error", "message": f"SQL Error: {str(e)}"}
 
-# --- 5. THE NEW AWS CLOUD ENGINE ENDPOINTS ---
+# --- 5. CLOUD EXECUTOR (For pushing SQL tables to AWS) ---
 
-@app.post("/deploy-to-aws")
-async def deploy_rds():
-    """Starts the creation of a real AWS RDS instance."""
-    result = create_rds_instance("nensiera-cafe-db")
-    return result
-
-@app.get("/check-aws-status")
-async def check_rds():
-    """Checks if your AWS database is 'Available' yet."""
-    result = get_db_status("nensiera-cafe-db")
-    return result
-
-@app.delete("/delete-aws-db")
-async def kill_rds():
-    """Triggers the permanent deletion of the RDS instance."""
-    result = delete_rds_instance("nensiera-cafe-db")
-    return result
-
-class CloudDeployRequest(BaseModel):
+# Renamed this so it doesn't clash with the AWS Provisioner!
+class SchemaDeployRequest(BaseModel):
     host: str
     table_schema: TableSchema
 
 @app.post("/api/cloud/deploy")
-async def deploy_to_real_rds(request: CloudDeployRequest):
-    # 1. Reuse your existing SQL generator logic
-    # (Extracting this logic into a helper function is cleaner, but let's keep it simple for now)
+async def deploy_to_real_rds(request: SchemaDeployRequest):
     columns_sql = []
     pk_columns = [col.name for col in request.table_schema.columns if col.is_primary_key]
     for col in request.table_schema.columns:
@@ -144,6 +123,62 @@ async def deploy_to_real_rds(request: CloudDeployRequest):
         
     create_table_sql = f"CREATE TABLE {request.table_schema.name} ({', '.join(columns_sql)});"
     
-    # 2. Push to AWS
     result = execute_on_rds(request.host, create_table_sql)
     return result
+
+# --- 6. AWS INFRASTRUCTURE PROVISIONING (The Engine Fix) ---
+
+class CloudDeployRequest(BaseModel):
+    db_name: str
+    vpc_sg_id: Optional[str] = None  # Safely accepts null from React
+    db_engine: str = "postgres"      # Accepts the database type
+
+@app.post("/deploy-to-aws")
+async def deploy_rds(request: CloudDeployRequest):
+    result = create_rds_instance(
+        db_instance_id=request.db_name, 
+        vpc_security_group_id=request.vpc_sg_id, 
+        engine=request.db_engine
+    )
+    return result
+
+@app.get("/check-aws-status")
+async def check_rds(db_name: str):
+    result = get_db_status(db_name)
+    return result
+
+@app.delete("/delete-aws-db")
+async def kill_rds(db_name: str):
+    result = delete_rds_instance(db_name)
+    return result
+
+@app.post("/api/cloud/terraform")
+async def generate_terraform(request: CloudDeployRequest):
+    """Generates a professional Terraform script based on the chosen engine."""
+    engine_version = "15.4" if request.db_engine == "postgres" else "8.0"
+    param_group = "default.postgres15" if request.db_engine == "postgres" else "default.mysql8.0"
+    
+    tf_code = f"""
+provider "aws" {{
+  region = "us-east-1"
+}}
+
+resource "aws_db_instance" "nensiera_database" {{
+  identifier           = "{request.db_name}"
+  allocated_storage    = 20
+  engine               = "{request.db_engine}"
+  engine_version       = "{engine_version}"
+  instance_class       = "db.t3.micro"
+  username             = "admin_user"
+  password             = "SECURE_PASSWORD_HERE" # Fetch from AWS SSM in production
+  parameter_group_name = "{param_group}"
+  skip_final_snapshot  = true
+  publicly_accessible  = true
+  
+  tags = {{
+    Environment = "Production"
+    Project     = "Automated-DB-Normalizer"
+  }}
+}}
+"""
+    return {"terraform_code": tf_code.strip()}
