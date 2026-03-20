@@ -144,3 +144,19 @@ def delete_dynamodb_table(table_name):
         return {"status": "success", "message": f"DynamoDB Table '{table_name}' destroyed!"}
     except Exception as e:
         return {"status": "error", "message": f"AWS Error: {str(e)}"}
+    
+
+
+def insert_dynamodb_data(table_name, item_dict):
+    """Injects a JSON payload into a live DynamoDB table"""
+    try:
+        # Using .resource() instead of .client() automatically handles data types!
+        dynamodb = boto3.resource('dynamodb', region_name='ap-south-1')
+        table = dynamodb.Table(table_name)
+        
+        # Push the data to AWS
+        table.put_item(Item=item_dict)
+        
+        return {"status": "success", "message": f"Data securely injected into {table_name}!"}
+    except Exception as e:
+        return {"status": "error", "message": f"AWS Error: {str(e)}"}

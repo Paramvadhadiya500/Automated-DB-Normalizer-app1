@@ -9,6 +9,8 @@ from cloud_engine import create_dynamodb_table, check_dynamodb_status, delete_dy
 
 from cloud_engine import create_rds_instance, get_db_status, delete_rds_instance, execute_on_rds
 
+from cloud_engine import create_dynamodb_table, check_dynamodb_status, delete_dynamodb_table, insert_dynamodb_data
+
 app = FastAPI()
 
 app.add_middleware(
@@ -239,3 +241,18 @@ resource "aws_db_instance" "nensiera_database" {{
 }}
 """
     return {"terraform_code": tf_code.strip()}
+
+# --- 7. LIVE DATA INJECTION ---
+
+class DataInsertRequest(BaseModel):
+    db_name: str
+    db_engine: str
+    payload: dict  # Automatically accepts valid JSON from React
+
+@app.post("/api/cloud/insert")
+async def insert_data(request: DataInsertRequest):
+    if request.db_engine == "dynamodb":
+        return insert_dynamodb_data(request.db_name, request.payload)
+    else:
+        # RDS requires complex connection strings and port forwarding.
+        return {"status": "error", "message": "RDS insertion requires a direct database connection (available after 5-10 mins). Test data injection with DynamoDB first!"}
