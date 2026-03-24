@@ -160,3 +160,101 @@ def insert_dynamodb_data(table_name, item_dict):
         return {"status": "success", "message": f"Data securely injected into {table_name}!"}
     except Exception as e:
         return {"status": "error", "message": f"AWS Error: {str(e)}"}
+
+        
+def deploy_secure_infrastructure(db_name, db_engine, vpc_sg_id, is_encrypted, iam_auth, has_backups, deletion_lock):
+    import boto3
+    try:
+        if db_engine == "dynamodb":
+            dynamodb = boto3.client('dynamodb', region_name='ap-south-1') # Deploys to Mumbai!
+            
+            # 1. Base NoSQL Parameters
+            params = {
+                'TableName': db_name,
+                'KeySchema': [{'AttributeName': 'id', 'KeyType': 'HASH'}],
+                'AttributeDefinitions': [{'AttributeName': 'id', 'AttributeType': 'S'}],
+                'BillingMode': 'PAY_PER_REQUEST'
+            }
+            
+            # 2. Inject Security Flags dynamically!
+            if is_encrypted:
+                params['SSESpecification'] = {'Enabled': True, 'SSEType': 'KMS'}
+            if deletion_lock:
+                params['DeletionProtectionEnabled'] = True
+                
+            dynamodb.create_table(**params)
+            
+            # 3. Backups require a secondary API call in DynamoDB
+            if has_backups:
+                dynamodb.update_continuous_backups(
+                    TableName=db_name,
+                    PointInTimeRecoverySpecification={'PointInTimeRecoveryEnabled': True}
+                )
+                
+            return {"status": "success", "message": f"✅ DynamoDB '{db_name}' deployed with strict security flags!"}
+            
+        else:
+            rds = boto3.client('rds', region_name='ap-south-1')
+            
+            # 1. Base SQL Parameters
+            params = {
+                'DBInstanceIdentifier': db_name,
+                'DBInstanceClass': 'db.t3.micro',
+                'Engine': db_engine,
+                'MasterUsername': 'dbadmin',
+                'MasterUserPassword': 'TempPassword123!', 
+                'AllocatedStorage': 20,
+                # If there is ANY VPC ID, it locks the database away from the public internet!
+                'PubliclyAccessible': False if vpc_sg_id else True 
+            }
+            
+            # 2. Inject Security Flags dynamically!
+            
+            # 🚨 FIX: Ignore the fake UI string, but apply real ones if typed manually!
+            if vpc_sg_id and vpc_sg_id.strip() != "" and vpc_sg_id != "sg-secure-0x9a8b7c":
+                params['VpcSecurityGroupIds'] = [vpc_sg_id.strip()]
+                
+            if is_encrypted:
+                params['StorageEncrypted'] = True
+            if iam_auth:
+                params['EnableIAMDatabaseAuthentication'] = True
+            if has_backups:
+                params['BackupRetentionPeriod'] = 1  # 1 day for Free Tier
+            if deletion_lock:
+                params['DeletionProtection'] = True
+                
+            rds.create_db_instance(**params)
+            return {"status": "success", "message": f"✅ RDS '{db_name}' deployed with strict security flags!"}
+            
+    except Exception as e:
+        return {"status": "error", "message": f"AWS Deployment Error: {str(e)}"}   
+    
+    
+def check_infrastructure_status(db_name, db_engine):
+    """Checks AWS for the live status and endpoint of the database."""
+    import boto3
+    try:
+        if db_engine == "dynamodb":
+            dynamodb = boto3.client('dynamodb', region_name='ap-south-1')
+            response = dynamodb.describe_table(TableName=db_name)
+            status = response['Table']['TableStatus']
+            return {"status": status, "endpoint": "DynamoDB Serverless"}
+        else:
+            rds = boto3.client('rds', region_name='ap-south-1')
+            response = rds.describe_db_instances(DBInstanceIdentifier=db_name)
+            
+            # Catch if AWS hasn't registered it yet
+            if not response['DBInstances']:
+                return {"error": f"Database '{db_name}' not found. AWS might still be booting it."}
+                
+            instance = response['DBInstances'][0]
+            status = instance['DBInstanceStatus']
+            
+            # Safely grab the endpoint only if it exists
+            endpoint = instance.get('Endpoint', {}).get('Address', 'Not ready yet (AWS is still creating the URL)')
+            
+            return {"status": status, "endpoint": endpoint}
+            
+    except Exception as e:
+        # If AWS throws an error, return it so React can show it!
+        return {"error": f"AWS Error: {str(e)}"}
