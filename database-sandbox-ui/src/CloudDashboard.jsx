@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
+
 const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, setIsUnderAttack, nodes, setNodes, setEdges }) => {
   // 💰 FINOPS STATE (Moved INSIDE the component where React expects it!)
   const [finopsData, setFinopsData] = useState(null);
@@ -8,6 +9,10 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   
+  
+// ⚡ CRUD GENERATOR STATE
+  const [crudFramework, setCrudFramework] = useState("express");
+  const [isGeneratingCrud, setIsGeneratingCrud] = useState(false);
   // 💾 1. PULL CLOUD DATA FROM LOCAL STORAGE ON LOAD
   const [dbName, setDbName] = useState(() => localStorage.getItem('cloud-dbName') || "youshouuld");
   const [dbEngine, setDbEngine] = useState(() => localStorage.getItem('cloud-dbEngine') || "mysql");
@@ -90,6 +95,50 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
     
     setIsEstimating(false);
   };
+
+  // ⚡ 4. THE CRUD API GENERATOR CALL
+  const downloadCrudApi = async () => {
+    if (!nodes || nodes.length === 0) {
+      alert("Please add some tables to the canvas first!");
+      return;
+    }
+    
+    setIsGeneratingCrud(true);
+    setStatus(`Generating ${crudFramework === 'express' ? 'Node.js' : 'FastAPI'} backend...`);
+    
+    try {
+      const response = await fetch('http://localhost:8000/api/generate-crud', {
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ framework: crudFramework, nodes: nodes })
+      });
+      const data = await response.json();
+      
+      if (data.status === 'success') {
+        // Create a downloadable file from the AI's code!
+        const blob = new Blob([data.code], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); 
+        a.href = url; 
+        a.download = data.filename;
+        document.body.appendChild(a); 
+        a.click(); 
+        document.body.removeChild(a); 
+        URL.revokeObjectURL(url);
+        
+        setStatus(`✅ ${data.filename} generated successfully!`);
+      } else {
+        alert("Generator Error: " + data.message);
+        setStatus("Generation failed.");
+      }
+    } catch (error) {
+      alert("Could not connect to API Generator.");
+      setStatus("Generation failed.");
+    }
+    
+    setIsGeneratingCrud(false);
+  };
+
 
   const deployToAWS = async () => {
     setLoading(true); setStatus("Deploying...");
@@ -267,6 +316,44 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
         </button>
 
         <button onClick={downloadTerraform} style={{ padding: '10px 15px', backgroundColor: '#64748b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>🏗️ Export Terraform</button>
+        <button onClick={deleteDatabase} disabled={loading} style={{ padding: '10px 15px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', marginLeft: 'auto' }}>🗑️ Destroy Infra</button>
+      </div>
+
+
+      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+        <button onClick={deployToAWS} disabled={loading} style={{ padding: '10px 15px', backgroundColor: dbMode === 'dynamodb' ? '#8b5cf6' : '#f59e0b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+          🚀 Deploy {dbMode === 'dynamodb' ? 'DYNAMODB' : dbEngine.toUpperCase()}
+        </button>
+        <button onClick={checkStatus} style={{ padding: '10px 15px', backgroundColor: '#1e293b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>🔄 Refresh Status</button>
+        
+        {/* 💰 FINOPS BUTTON */}
+        <button onClick={runFinOpsEstimate} disabled={isEstimating} style={{ padding: '10px 15px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+          {isEstimating ? "🧮 Calculating..." : "💰 Estimate AWS Cost"}
+        </button>
+
+        <button onClick={downloadTerraform} style={{ padding: '10px 15px', backgroundColor: '#64748b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>🏗️ Export Terraform</button>
+
+        {/* ⚡ NEW CRUD GENERATOR UI */}
+        {dbMode === 'sql' && (
+          <div style={{ display: 'flex', border: '1px solid #cbd5e1', borderRadius: '5px', overflow: 'hidden', marginLeft: '10px' }}>
+            <select 
+              value={crudFramework} 
+              onChange={(e) => setCrudFramework(e.target.value)} 
+              style={{ padding: '10px', border: 'none', borderRight: '1px solid #cbd5e1', outline: 'none', backgroundColor: 'white', cursor: 'pointer', fontWeight: 'bold', color: '#475569' }}
+            >
+              <option value="express">Node.js (Express)</option>
+              <option value="fastapi">Python (FastAPI)</option>
+            </select>
+            <button 
+              onClick={downloadCrudApi} 
+              disabled={isGeneratingCrud} 
+              style={{ padding: '10px 15px', backgroundColor: '#8b5cf6', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
+            >
+              {isGeneratingCrud ? "⏳ Writing Code..." : "⚡ Generate API File"}
+            </button>
+          </div>
+        )}
+
         <button onClick={deleteDatabase} disabled={loading} style={{ padding: '10px 15px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', marginLeft: 'auto' }}>🗑️ Destroy Infra</button>
       </div>
 

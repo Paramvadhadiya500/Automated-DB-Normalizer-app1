@@ -632,3 +632,90 @@ async def estimate_cloud_cost(request: FinOpsRequest):
         return {"status": "error", "message": "Failed to parse AI output into JSON."}
     except Exception as e:
         return {"status": "error", "message": f"FinOps Engine Error: {str(e)}"}
+    
+
+    # --- 13. ⚡ AUTO CRUD API GENERATOR ---
+
+class CrudGenerateRequest(BaseModel):
+    framework: str  # "express" or "fastapi"
+    nodes: list     # The React Flow nodes
+
+@app.post("/api/generate-crud")
+async def generate_crud_api(request: CrudGenerateRequest):
+    if not API_KEY:
+        return {"status": "error", "message": "Gemini API key is missing!"}
+
+    # 1. Extract and format the React Flow nodes into the clean JSON the AI expects
+    tables_for_prompt = []
+    for node in request.nodes:
+        schema = node.get("data", {}).get("schema")
+        
+        # Skip empty nodes or NoSQL for this specific SQL CRUD generator
+        if not schema or schema.get("db_mode") == "dynamodb":
+            continue
+            
+        table_name = schema.get("name")
+        columns = []
+        for col in schema.get("columns", []):
+            columns.append({
+                "name": col.get("name"),
+                "type": col.get("data_type").lower(),
+                "primary_key": col.get("is_primary_key", False)
+            })
+            
+        if table_name and columns:
+            tables_for_prompt.append({
+                "table_name": table_name,
+                "columns": columns
+            })
+
+    if not tables_for_prompt:
+        return {"status": "error", "message": "No valid SQL tables found on the canvas to generate APIs for."}
+
+    clean_schema_json = json.dumps({"tables": tables_for_prompt}, indent=2)
+
+    try:
+        # 2. Your exact master prompt!
+        system_instruction = f"""You are an expert backend developer.
+        Your task is to automatically generate a complete CRUD API server based on a database schema provided in JSON format.
+        
+        Generate production-ready backend code that creates CRUD APIs for every table defined in the schema.
+        The user has selected the following backend framework: **{request.framework.upper()}**
+        
+        IF EXPRESS SELECTED: Use Node.js, Express, body-parser, cors, dotenv, and parameterized SQL. Route format: /api/tablename
+        IF FASTAPI SELECTED: Use Python, FastAPI, Pydantic, SQLAlchemy. Route format: /tablename
+        
+        Generate CRUD APIs for EACH table: GET all, GET by ID, POST, PUT, DELETE.
+        Map schema types to appropriate database types (integer, string, boolean, etc).
+        
+        OUTPUT RULES:
+        Return ONLY the final code file.
+        Do NOT include explanation.
+        Do NOT include markdown formatting (do not wrap in ```python or ```javascript).
+        Only output raw code.
+        """
+        
+        full_prompt = f"{system_instruction}\n\nINPUT SCHEMA:\n{clean_schema_json}"
+        
+        # 3. Call the AI
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        response = model.generate_content(full_prompt)
+        
+        # 4. Clean the output (AI stubbornly adds markdown backticks sometimes)
+        raw_code = response.text.strip()
+        if raw_code.startswith("```"):
+            # Find the first newline to strip the ```javascript or ```python tag
+            first_newline = raw_code.find('\n')
+            if first_newline != -1:
+                raw_code = raw_code[first_newline+1:]
+        if raw_code.endswith("```"):
+            raw_code = raw_code[:-3]
+            
+        return {
+            "status": "success", 
+            "code": raw_code.strip(),
+            "filename": "server.js" if request.framework == "express" else "main.py"
+        }
+
+    except Exception as e:
+        return {"status": "error", "message": f"API Generator Error: {str(e)}"}
