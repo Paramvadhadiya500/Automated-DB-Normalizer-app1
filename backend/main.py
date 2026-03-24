@@ -1,32 +1,40 @@
+import os
+import json
 import sqlite3
+import pymysql
+import psycopg2
+import boto3
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request
-from typing import Optional
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
-from cloud_engine import create_rds_instance, get_db_status, delete_rds_instance, execute_on_rds
-# Add the new imports!
-from cloud_engine import create_dynamodb_table, check_dynamodb_status, delete_dynamodb_table
 
-from cloud_engine import create_rds_instance, get_db_status, delete_rds_instance, execute_on_rds
+# 1. 🤖 IMPORT THE NEW AI LIBRARY
+import google.generativeai as genai
 
-from cloud_engine import create_dynamodb_table, check_dynamodb_status, delete_dynamodb_table, insert_dynamodb_data,deploy_secure_infrastructure
+from cloud_engine import (
+    create_rds_instance, get_db_status, delete_rds_instance, execute_on_rds,
+    create_dynamodb_table, check_dynamodb_status, delete_dynamodb_table,
+    insert_dynamodb_data, deploy_secure_infrastructure, check_infrastructure_status
+)
 
-from cloud_engine import deploy_secure_infrastructure, check_infrastructure_status
+# 2. 🔐 LOAD THE SECRET API KEY FROM YOUR .ENV FILE
+load_dotenv()
+API_KEY = os.getenv("GEMINI_API_KEY")
 
-import pymysql
-import psycopg2
-
-
-
-
-
+if not API_KEY:
+    print("⚠️ WARNING: GEMINI_API_KEY not found in .env file!")
+else:
+    # Configure the Google Gemini Client
+    genai.configure(api_key=API_KEY)
+    print("🧠 Gemini AI Core Initialized Successfully!")
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -38,7 +46,7 @@ class Column(BaseModel):
     name: str
     data_type: str
     is_primary_key: bool = False
-    is_sort_key: Optional[bool] = False  # <--- NEW: Python now understands Sort Keys
+    is_sort_key: Optional[bool] = False
 
 class Dependency(BaseModel):
     determinants: List[str]
@@ -48,12 +56,11 @@ class TableSchema(BaseModel):
     name: str
     columns: List[Column]
     dependencies: List[Dependency] = []
-    db_mode: str = "sql"  # <--- NEW: Tells Python which rulebook to use
+    db_mode: str = "sql"
 
 
 # --- 2. The Normalization Logic ---
 
-# 🆕 THE DYNAMODB RULEBOOK
 def analyze_dynamodb(table: TableSchema):
     violations = []
     pk_count = sum(1 for col in table.columns if col.is_primary_key)
@@ -74,7 +81,6 @@ def analyze_dynamodb(table: TableSchema):
 
     return violations
 
-# THE SQL RULEBOOK
 def analyze_1nf(table: TableSchema):
     violations = []
     for col in table.columns:
@@ -114,7 +120,6 @@ def analyze_3nf(table: TableSchema):
 
 @app.post("/api/normalize/analyze")
 def analyze_full_schema(table: TableSchema):
-    # 🆕 THE SMART ROUTER: Checks the toggle switch
     if table.db_mode == "dynamodb":
         errors = analyze_dynamodb(table)
         if errors:
@@ -151,7 +156,6 @@ def deploy_to_sandbox(table: TableSchema):
 # --- AWS STATUS CHECKER ENDPOINT ---
 @app.get("/check-aws-status")
 async def check_aws_status(db_name: str, db_engine: str):
-    """React calls this to get the live AWS status and Endpoint URL."""
     return check_infrastructure_status(db_name=db_name, db_engine=db_engine)
 
 # --- 5. CLOUD EXECUTOR (For pushing SQL tables to AWS) ---
@@ -173,9 +177,8 @@ async def deploy_to_real_rds(request: SchemaDeployRequest):
     return result
 
 
-# --- 6. AWS INFRASTRUCTURE PROVISIONING (The Smart Router) ---
+# --- 6. AWS INFRASTRUCTURE PROVISIONING ---
 
-# --- AWS DEPLOYMENT ENDPOINT ---
 class DeployRequest(BaseModel):
     db_name: str
     db_engine: str
@@ -187,7 +190,6 @@ class DeployRequest(BaseModel):
 
 @app.post("/deploy-to-aws")
 async def deploy_to_aws(request: DeployRequest):
-    # Pass all the security flags directly to our new Boto3 engine
     return deploy_secure_infrastructure(
         db_name=request.db_name,
         db_engine=request.db_engine,
@@ -198,10 +200,8 @@ async def deploy_to_aws(request: DeployRequest):
         deletion_lock=request.deletion_lock
     )
 
-
 @app.delete("/delete-aws-db")
 async def delete_aws_database(db_name: str, db_engine: str):
-    import boto3
     try:
         if db_engine == "dynamodb":
             dynamodb = boto3.client('dynamodb', region_name='ap-south-1')
@@ -209,18 +209,15 @@ async def delete_aws_database(db_name: str, db_engine: str):
             return {"status": "success", "message": f"🗑️ DynamoDB '{db_name}' deleted successfully."}
         else:
             rds = boto3.client('rds', region_name='ap-south-1')
-            
-            # 🚨 THE OVERRIDE: Tell AWS to instantly remove the Deletion Protection Lock
             try:
                 rds.modify_db_instance(
                     DBInstanceIdentifier=db_name,
                     DeletionProtection=False,
                     ApplyImmediately=True
                 )
-            except Exception as e:
-                pass # If it's already unlocked, just ignore and proceed to delete
+            except Exception:
+                pass 
             
-            # Now that the armor is off, destroy the database without a backup snapshot
             rds.delete_db_instance(
                 DBInstanceIdentifier=db_name,
                 SkipFinalSnapshot=True
@@ -230,11 +227,12 @@ async def delete_aws_database(db_name: str, db_engine: str):
     except Exception as e:
         return {"status": "error", "message": f"An error occurred: {str(e)}"}
 
+class CloudDeployRequest(BaseModel):
+    db_name: str
+    db_engine: str
+
 @app.post("/api/cloud/terraform")
 async def generate_terraform(request: CloudDeployRequest):
-    """Generates a professional Terraform script for SQL or NoSQL."""
-    
-    # If NoSQL, generate DynamoDB Terraform
     if request.db_engine == "dynamodb":
         tf_code = f"""
 provider "aws" {{
@@ -259,7 +257,6 @@ resource "aws_dynamodb_table" "nensiera_nosql" {{
 """
         return {"terraform_code": tf_code.strip()}
 
-    # Otherwise, generate standard RDS Terraform
     engine_version = "15.4" if request.db_engine == "postgres" else "8.0"
     param_group = "default.postgres15" if request.db_engine == "postgres" else "default.mysql8.0"
     tf_code = f"""
@@ -287,17 +284,16 @@ resource "aws_db_instance" "nensiera_database" {{
 class DataInsertRequest(BaseModel):
     db_name: str
     db_engine: str
-    payload: dict  # Automatically accepts valid JSON from React
+    payload: dict 
 
 @app.post("/api/cloud/insert")
 async def insert_data(request: DataInsertRequest):
     if request.db_engine == "dynamodb":
         return insert_dynamodb_data(request.db_name, request.payload)
     else:
-        # RDS requires complex connection strings and port forwarding.
         return {"status": "error", "message": "RDS insertion requires a direct database connection (available after 5-10 mins). Test data injection with DynamoDB first!"}
     
-    # --- 8. SEC-OPS THREAT MODELER ---
+# --- 8. SEC-OPS THREAT MODELER ---
 
 class SecurityScanRequest(BaseModel):
     db_name: str
@@ -310,43 +306,34 @@ class SecurityScanRequest(BaseModel):
 
 @app.post("/api/security/analyze")
 async def analyze_security(request: SecurityScanRequest):
-    """
-    Scans the database architecture and calculates a dynamic AWS Well-Architected Security Score.
-    """
-    score = 10  # Base score for an exposed, default database
+    score = 10 
     warnings = []
 
-    # 1. Network Security (VPC)
     if request.vpc_sg_id and request.vpc_sg_id.strip() != "":
         score += 20
     else:
         warnings.append("🚨 CRITICAL: Database exposed to public internet (Missing VPC).")
 
-    # 2. Data Encryption at Rest (KMS)
     if request.is_encrypted:
         score += 20
     else:
         warnings.append("⚠️ HIGH: Data is unencrypted. Vulnerable to physical server breaches.")
 
-    # 3. Identity & Access Management (IAM)
     if request.iam_auth:
         score += 15
     else:
         warnings.append("⚠️ HIGH: Using static passwords. Vulnerable to credential leaks via GitHub.")
 
-    # 4. Disaster Recovery (PITR)
     if request.has_backups:
         score += 20
     else:
         warnings.append("⚠️ HIGH: Point-in-Time Recovery disabled. Vulnerable to Ransomware.")
 
-    # 5. Insider Threat Protection
     if request.deletion_lock:
         score += 15
     else:
         warnings.append("⚠️ MEDIUM: Deletion Lock off. Vulnerable to accidental/malicious deletion.")
 
-    # Determine final status
     status = "secured" if score == 100 else "vulnerable"
     message = "✅ Military-Grade Security Applied" if score == 100 else f"⚠️ {len(warnings)} Vulnerabilities Detected"
 
@@ -358,27 +345,21 @@ async def analyze_security(request: SecurityScanRequest):
     }
 
 
-
 # --- 9. PHASE 5: THE AUTO-MIGRATOR ---
 
 class MigrationRequest(BaseModel):
     endpoint: str
     db_engine: str
-    nodes: list  # The React Flow canvas nodes
+    nodes: list
 
 @app.post("/api/cloud/migrate")
 async def run_schema_migrations(request: MigrationRequest):
-    """
-    Translates the React canvas into SQL and executes it inside the live AWS database.
-    """
     engine = request.db_engine.lower()
     endpoint = request.endpoint
     
-    # We set these during the Boto3 Phase 4 deployment
     master_user = 'dbadmin'
     master_pass = 'TempPassword123!'
     
-    # 1. Translate the React Canvas into SQL Commands
     sql_commands = []
     for node in request.nodes:
         schema = node.get("data", {}).get("schema")
@@ -401,7 +382,6 @@ async def run_schema_migrations(request: MigrationRequest):
             if col.get("is_primary_key"):
                 primary_keys.append(col_name)
                 
-        # Build the CREATE TABLE string
         sql = f"CREATE TABLE IF NOT EXISTS {table_name} (\n  "
         sql += ",\n  ".join(col_defs)
         if primary_keys:
@@ -412,10 +392,8 @@ async def run_schema_migrations(request: MigrationRequest):
     if not sql_commands:
         return {"status": "error", "message": "No valid SQL tables found on the canvas."}
 
-    # 2. Connect to AWS and Execute the SQL
     try:
         if engine in ["mysql", "mariadb"]:
-            # Connect to MySQL/MariaDB
             connection = pymysql.connect(
                 host=endpoint,
                 user=master_user,
@@ -424,7 +402,6 @@ async def run_schema_migrations(request: MigrationRequest):
                 cursorclass=pymysql.cursors.DictCursor
             )
         elif engine == "postgres":
-            # Connect to PostgreSQL
             connection = psycopg2.connect(
                 host=endpoint,
                 user=master_user,
@@ -434,7 +411,6 @@ async def run_schema_migrations(request: MigrationRequest):
         else:
             return {"status": "error", "message": "Unsupported engine for migration."}
 
-        # Execute the commands
         with connection.cursor() as cursor:
             for sql in sql_commands:
                 cursor.execute(sql)
@@ -451,27 +427,20 @@ async def run_schema_migrations(request: MigrationRequest):
         return {"status": "error", "message": f"Database Connection/Execution Error: {str(e)}"}
 
 
-        # --- 🧠 RESTORED: AI SCHEMA NORMALIZATION ENGINE ---
+# --- 10. AI SCHEMA NORMALIZATION ENGINE ---
 class AnalyzeRequest(BaseModel):
     tables: list
     relationships: list
 
 @app.post("/api/analyze")
 async def analyze_schema(request: AnalyzeRequest):
-    """
-    Analyzes the React Flow schema for 1NF, 2NF, and 3NF violations.
-    """
     tables = request.tables
-    
     if not tables:
         return {"analysis": "No tables provided for analysis."}
         
-    # Grab the first table the user clicked on
     table = tables[0] 
-    table_name = table.get("name", "").lower()
     columns = [col.get("name", "").lower() for col in table.get("columns", [])]
     
-    # 🎯 SMART DEMO DETECTION: Automatically catches the 'customer_orders' flaw!
     if "customer_name" in columns and "product_name" in columns:
         report = (
             "🧠 AI Normalization Report:\n\n"
@@ -484,7 +453,56 @@ async def analyze_schema(request: AnalyzeRequest):
         )
         return {"analysis": report}
             
-    # Generic AI response for perfectly built tables
     return {
         "analysis": "🧠 AI Analysis Complete:\n✅ 1NF Passed\n✅ 2NF Passed\n✅ 3NF Passed\n\nThis schema is properly normalized. All non-key columns depend entirely on the Primary Key."
     }
+
+
+# --- 11. 🪄 GENERATIVE AI SCHEMA BUILDER ---
+class AIGenerateRequest(BaseModel):
+    prompt: str
+
+@app.post("/api/ai/generate")
+async def generate_schema_from_ai(request: AIGenerateRequest):
+    if not API_KEY:
+        return {"status": "error", "message": "Gemini API key is missing!"}
+
+    try:
+        system_instruction = """You are a Senior Cloud Database Architect. 
+        The user will give you an idea for a software application. 
+        You MUST design a highly professional, normalized relational database schema for it.
+        
+        CRITICAL RULES:
+        1. Return ONLY a valid JSON array. Do not say "Here is your schema" or write any text outside the JSON.
+        2. Do NOT wrap the response in markdown code blocks (like ```json).
+        3. Follow this EXACT JSON structure for the array:
+        [
+          {
+            "name": "table_name_lowercase",
+            "columns": [
+              {"name": "id", "data_type": "INT", "is_primary_key": true},
+              {"name": "example_col", "data_type": "VARCHAR", "is_primary_key": false}
+            ]
+          }
+        ]
+        """
+
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        
+        full_prompt = f"{system_instruction}\n\nUser App Idea: {request.prompt}"
+        response = model.generate_content(full_prompt)
+        
+        raw_text = response.text.strip()
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:]
+        if raw_text.endswith("```"):
+            raw_text = raw_text[:-3]
+            
+        schema_json = json.loads(raw_text.strip())
+        
+        return {"status": "success", "tables": schema_json}
+
+    except json.JSONDecodeError:
+        return {"status": "error", "message": "AI returned invalid data format. Try again."}
+    except Exception as e:
+        return {"status": "error", "message": f"AI Engine Error: {str(e)}"}

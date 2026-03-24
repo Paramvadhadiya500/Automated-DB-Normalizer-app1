@@ -19,10 +19,15 @@ export default function App() {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
+  
   const [newColName, setNewColName] = useState("");
   const [newColType, setNewColType] = useState("INT");
   const [isPk, setIsPk] = useState(false);
   const [nosqlKeyType, setNosqlKeyType] = useState("attribute"); 
+
+  // 🪄 AI TEXT-TO-SCHEMA STATE
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const selectedNode = nodes.find(n => n.id === selectedNodeId);
 
@@ -146,6 +151,48 @@ export default function App() {
     setIsAnalyzing(false);
   };
 
+  // 🪄 THE GENERATIVE AI FUNCTION
+  const generateFromAI = async () => {
+    if (!aiPrompt.trim()) return;
+    setIsGenerating(true);
+    try {
+      const response = await fetch('http://localhost:8000/api/ai/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: aiPrompt })
+      });
+      const data = await response.json();
+
+      if (data.status === 'success' && data.tables) {
+        const newNodes = [];
+        data.tables.forEach((table, index) => {
+          const newId = `ai-${Date.now()}-${index}`;
+          newNodes.push({
+            id: newId,
+            type: 'customTable',
+            // Spacing the new tables out horizontally so they don't overlap!
+            position: { x: 300 * index + 100, y: 150 }, 
+            data: {
+              label: table.name,
+              schema: { name: table.name, columns: table.columns, dependencies: [], db_mode: dbMode },
+              isUnderAttack: false
+            }
+          });
+        });
+        
+        // Add the new AI nodes to the canvas!
+        setNodes((nds) => [...nds, ...newNodes]);
+        setAiPrompt(""); // Clear the input box on success
+      } else {
+        alert(data.message || "❌ Failed to generate schema from AI.");
+      }
+    } catch (error) {
+      console.error(error);
+      alert("❌ Error connecting to AI Backend. Is your Python server running?");
+    }
+    setIsGenerating(false);
+  };
+
   return (
     <div style={{ width: '100vw', height: '100vh', backgroundColor: isSecOpsMode ? '#0f172a' : '#f8fafc', position: 'relative', overflow: 'hidden', transition: 'background-color 0.5s ease' }}>
       
@@ -160,7 +207,7 @@ export default function App() {
         setEdges={setEdges}
       />  
       
-      <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 10, display: 'flex', gap: '15px', backgroundColor: isSecOpsMode ? '#1e293b' : 'white', padding: '10px 20px', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', alignItems: 'center', transition: 'all 0.3s ease' }}>
+      <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 10, display: 'flex', gap: '15px', backgroundColor: isSecOpsMode ? '#1e293b' : 'white', padding: '10px 20px', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', alignItems: 'center', transition: 'all 0.3s ease', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', backgroundColor: isSecOpsMode ? '#334155' : '#e2e8f0', borderRadius: '6px', padding: '4px' }}>
           <button onClick={() => setDbMode('sql')} style={{ padding: '6px 12px', backgroundColor: dbMode === 'sql' ? '#3b82f6' : 'transparent', color: dbMode === 'sql' ? 'white' : (isSecOpsMode ? '#94a3b8' : '#64748b'), border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>SQL</button>
           <button onClick={() => setDbMode('dynamodb')} style={{ padding: '6px 12px', backgroundColor: dbMode === 'dynamodb' ? '#8b5cf6' : 'transparent', color: dbMode === 'dynamodb' ? 'white' : (isSecOpsMode ? '#94a3b8' : '#64748b'), border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>DynamoDB</button>
@@ -173,6 +220,25 @@ export default function App() {
         </div>
         <div style={{ width: '1px', height: '30px', backgroundColor: isSecOpsMode ? '#475569' : '#cbd5e1' }}></div>
         <button onClick={addNewTable} style={{ padding: '8px 16px', backgroundColor: dbMode === 'dynamodb' ? '#8b5cf6' : '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>+ Create {dbMode === 'dynamodb' ? 'Document' : 'Table'}</button>
+        
+        {/* 🪄 NEW AI GENERATION UI */}
+        <div style={{ width: '1px', height: '30px', backgroundColor: isSecOpsMode ? '#475569' : '#cbd5e1' }}></div>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', backgroundColor: isSecOpsMode ? '#334155' : '#f1f5f9', padding: '4px 8px', borderRadius: '6px' }}>
+          <input 
+            value={aiPrompt} 
+            onChange={(e) => setAiPrompt(e.target.value)} 
+            placeholder="Describe app (e.g. food delivery)..." 
+            disabled={isGenerating}
+            style={{ padding: '6px 10px', borderRadius: '4px', border: `1px solid ${isSecOpsMode ? '#475569' : '#cbd5e1'}`, width: '220px', fontSize: '13px', backgroundColor: isSecOpsMode ? '#1e293b' : 'white', color: isSecOpsMode ? 'white' : 'black', outline: 'none' }} 
+          />
+          <button 
+            onClick={generateFromAI} 
+            disabled={isGenerating || !aiPrompt.trim()} 
+            style={{ padding: '6px 12px', backgroundColor: '#f59e0b', color: 'white', border: 'none', borderRadius: '4px', cursor: isGenerating || !aiPrompt.trim() ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '5px' }}
+          >
+            {isGenerating ? "⏳ Thinking..." : "✨ AI Generate"}
+          </button>
+        </div>
       </div>
       
       {isPanelOpen && selectedNode && (
