@@ -9,6 +9,10 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
+import json
+from pydantic import BaseModel
+import google.generativeai as genai
+
 
 # 1. 🤖 IMPORT THE NEW AI LIBRARY
 import google.generativeai as genai
@@ -352,6 +356,7 @@ class MigrationRequest(BaseModel):
     db_engine: str
     nodes: list
 
+
 @app.post("/api/cloud/migrate")
 async def run_schema_migrations(request: MigrationRequest):
     engine = request.db_engine.lower()
@@ -412,6 +417,11 @@ async def run_schema_migrations(request: MigrationRequest):
             return {"status": "error", "message": "Unsupported engine for migration."}
 
         with connection.cursor() as cursor:
+            # 🚨 THE FIX: Create a database and tell MySQL to USE it before making tables!
+            if engine in ["mysql", "mariadb"]:
+                cursor.execute("CREATE DATABASE IF NOT EXISTS my_cloud_app;")
+                cursor.execute("USE my_cloud_app;")
+                
             for sql in sql_commands:
                 cursor.execute(sql)
         connection.commit()
@@ -419,7 +429,7 @@ async def run_schema_migrations(request: MigrationRequest):
         
         return {
             "status": "success", 
-            "message": f"Successfully created {len(sql_commands)} tables in AWS!",
+            "message": f"✅ Successfully created {len(sql_commands)} tables in AWS!",
             "executed_sql": sql_commands
         }
 
@@ -506,3 +516,119 @@ async def generate_schema_from_ai(request: AIGenerateRequest):
         return {"status": "error", "message": "AI returned invalid data format. Try again."}
     except Exception as e:
         return {"status": "error", "message": f"AI Engine Error: {str(e)}"}
+    
+class FinOpsRequest(BaseModel):
+    database_type: str
+    engine: str
+    region: str = "ap-south-1"
+    instance_class: str = "db.t3.micro"
+    storage_gb: int = 20
+    expected_monthly_requests: int = 100000
+    expected_monthly_read_units: int = 25
+    expected_monthly_write_units: int = 25
+    backup_enabled: bool = True
+    multi_az: bool = False
+    estimated_data_transfer_gb: int = 5
+    environment: str = "dev"
+
+@app.post("/api/finops/estimate")
+async def estimate_cloud_cost(request: FinOpsRequest):
+    try:
+        # Your exact master prompt goes here
+        system_instruction = """You are a Cloud FinOps Estimation Engine responsible for calculating accurate AWS database costs using real AWS pricing data (NOT static or hardcoded values).
+
+        GOAL
+        Provide a realistic monthly AWS cost estimation for database infrastructure based on architecture configuration selected by the user.
+
+        You must use real pricing logic similar to AWS Pricing API structure and ensure the estimate reflects realistic AWS billing components.
+
+        PRICING DATA REQUIREMENTS
+        Use real AWS-style pricing logic including:
+
+        FOR RDS (SQL DATABASES)
+        Include:
+        1. compute hourly price based on instance class
+        2. storage price per GB-month
+        3. backup storage cost per GB-month (if enabled)
+        4. multi-AZ multiplier (approx double compute cost)
+        5. data transfer cost (if provided)
+
+        Formula structure:
+        monthly_compute_cost = hourly_price * 24 * 30
+        monthly_storage_cost = storage_price_per_gb * storage_gb
+        backup_cost = backup_price_per_gb * storage_gb
+        multi_az_cost = compute_cost * 2 (if enabled)
+        data_transfer_cost = transfer_price_per_gb * estimated_data_transfer_gb
+
+        FOR DYNAMODB (NOSQL)
+        Include:
+        1. read request unit cost
+        2. write request unit cost
+        3. storage per GB cost
+        4. on-demand pricing logic
+
+        FREE TIER LOGIC
+        Check AWS Free Tier eligibility:
+        RDS free tier includes: 750 hours/month db.t3.micro, 20GB storage
+        DynamoDB free tier includes: 25GB storage, 25 RCUs, 25 WCUs
+        Indicate how much usage falls within free tier.
+
+        OUTPUT FORMAT
+        Return structured JSON only matching this exact format:
+        {
+          "cloud_provider": "AWS",
+          "region": "ap-south-1",
+          "database_engine": "",
+          "estimated_monthly_cost_usd": 0.0,
+          "cost_breakdown": {
+            "compute_cost": 0.0,
+            "storage_cost": 0.0,
+            "request_cost": 0.0,
+            "backup_cost": 0.0,
+            "data_transfer_cost": 0.0,
+            "multi_az_cost": 0.0
+          },
+          "free_tier_analysis": {
+            "eligible": true,
+            "free_tier_coverage_percentage": 0.0,
+            "estimated_cost_after_free_tier": 0.0
+          },
+          "cost_efficiency_score": 0,
+          "optimization_recommendations": [],
+          "scalability_cost_projection": {
+            "expected_cost_if_usage_doubles": 0.0,
+            "expected_cost_if_storage_doubles": 0.0
+          },
+          "pricing_confidence": "high"
+        }
+        
+        IMPORTANT RULES
+        1. Do NOT return approximate guesses. Always provide calculated numeric values.
+        2. Always return JSON only. No markdown formatting outside the JSON block.
+        3. Assume 730 hours per month for compute estimation.
+        """
+        
+        # Convert incoming request to a JSON string
+        user_config = request.model_dump_json()
+        full_prompt = f"{system_instruction}\n\nINPUT PARAMETERS:\n{user_config}"
+        
+        # Initialize Gemini and generate response
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        response = model.generate_content(full_prompt)
+        
+        # Clean up potential markdown from the response
+        raw_text = response.text.strip()
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:]
+        if raw_text.startswith("```"):
+            raw_text = raw_text[3:]
+        if raw_text.endswith("```"):
+            raw_text = raw_text[:-3]
+            
+        finops_data = json.loads(raw_text.strip())
+        return {"status": "success", "data": finops_data}
+
+    except json.JSONDecodeError:
+        return {"status": "error", "message": "Failed to parse AI output into JSON."}
+    except Exception as e:
+        return {"status": "error", "message": f"FinOps Engine Error: {str(e)}"}

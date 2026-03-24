@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 
 const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, setIsUnderAttack, nodes, setNodes, setEdges }) => {
+  // 💰 FINOPS STATE (Moved INSIDE the component where React expects it!)
+  const [finopsData, setFinopsData] = useState(null);
+  const [isEstimating, setIsEstimating] = useState(false);
+
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   
@@ -54,6 +58,38 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
       setEdges(eds => eds.map(edge => ({ ...edge, animated: true, style: { stroke: '#10b981', strokeWidth: 3 } })));
     }
   }, [isSecured, isSecOpsMode, setNodes, setEdges, setIsUnderAttack]);
+
+  // 💰 3. THE FINOPS API CALL FUNCTION
+  const runFinOpsEstimate = async () => {
+    setIsEstimating(true);
+    setFinopsData(null);
+    
+    try {
+      const payload = {
+        database_type: dbMode === 'sql' ? 'relational' : 'nosql',
+        engine: dbMode === 'sql' ? dbEngine : 'dynamodb',
+        multi_az: hasBackups, // Assuming backups imply a more robust setup for now
+        backup_enabled: hasBackups
+      };
+      
+      const response = await fetch('http://localhost:8000/api/finops/estimate', {
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      
+      if (data.status === 'success') {
+        setFinopsData(data.data);
+      } else {
+        alert("FinOps Error: " + data.message);
+      }
+    } catch (error) {
+      alert("Could not connect to FinOps Engine.");
+    }
+    
+    setIsEstimating(false);
+  };
 
   const deployToAWS = async () => {
     setLoading(true); setStatus("Deploying...");
@@ -220,9 +256,66 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
           🚀 Deploy {dbMode === 'dynamodb' ? 'DYNAMODB' : dbEngine.toUpperCase()}
         </button>
         <button onClick={checkStatus} style={{ padding: '10px 15px', backgroundColor: '#1e293b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>🔄 Refresh Status</button>
+        
+        {/* 💰 FINOPS BUTTON ADDED HERE */}
+        <button 
+          onClick={runFinOpsEstimate} 
+          disabled={isEstimating} 
+          style={{ padding: '10px 15px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}
+        >
+          {isEstimating ? "🧮 Calculating..." : "💰 Estimate AWS Cost"}
+        </button>
+
         <button onClick={downloadTerraform} style={{ padding: '10px 15px', backgroundColor: '#64748b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>🏗️ Export Terraform</button>
         <button onClick={deleteDatabase} disabled={loading} style={{ padding: '10px 15px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', marginLeft: 'auto' }}>🗑️ Destroy Infra</button>
       </div>
+
+      {/* 💰 FINOPS UI WIDGET ADDED HERE */}
+      {finopsData && (
+        <div style={{ marginTop: '20px', padding: '20px', backgroundColor: '#ecfdf5', border: '2px solid #10b981', borderRadius: '8px', display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+          
+          {/* Left Column: Cost Summary */}
+          <div style={{ flex: '1 1 300px' }}>
+            <h3 style={{ margin: '0 0 10px 0', color: '#047857', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              AWS FinOps Estimate <span style={{ fontSize: '12px', padding: '2px 6px', backgroundColor: '#d1fae5', borderRadius: '12px' }}>{finopsData.region}</span>
+            </h3>
+            
+            <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#065f46', marginBottom: '10px' }}>
+              ${finopsData.estimated_monthly_cost_usd} <span style={{ fontSize: '14px', fontWeight: 'normal' }}>/ month</span>
+            </div>
+            
+            {finopsData.free_tier_analysis?.eligible && (
+               <div style={{ padding: '8px 12px', backgroundColor: '#d1fae5', color: '#047857', borderRadius: '6px', fontSize: '13px', fontWeight: 'bold', display: 'inline-block' }}>
+                 🎉 Free Tier Eligible ({finopsData.free_tier_analysis.free_tier_coverage_percentage}% Covered)
+                 <div style={{ fontSize: '11px', fontWeight: 'normal', marginTop: '4px' }}>
+                   Est. Cost after Free Tier: ${finopsData.free_tier_analysis.estimated_cost_after_free_tier}
+                 </div>
+               </div>
+            )}
+          </div>
+
+          {/* Right Column: Optimization Tips */}
+          <div style={{ flex: '2 1 400px', backgroundColor: 'white', padding: '15px', borderRadius: '8px', border: '1px solid #a7f3d0' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <h4 style={{ margin: 0, color: '#047857' }}>Optimization Recommendations</h4>
+              <div style={{ fontSize: '12px', fontWeight: 'bold', color: finopsData.cost_efficiency_score > 70 ? '#10b981' : '#f59e0b' }}>
+                Efficiency Score: {finopsData.cost_efficiency_score}/100
+              </div>
+            </div>
+            
+            <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '13px', color: '#064e3b', lineHeight: '1.6' }}>
+              {finopsData.optimization_recommendations?.map((tip, i) => (
+                <li key={i}>{tip}</li>
+              ))}
+            </ul>
+            
+            <div style={{ marginTop: '15px', paddingTop: '10px', borderTop: '1px solid #e2e8f0', fontSize: '12px', color: '#64748b' }}>
+              <strong>Scalability Projection:</strong> If usage doubles, expect costs around ${finopsData.scalability_cost_projection?.expected_cost_if_usage_doubles}.
+            </div>
+          </div>
+          
+        </div>
+      )}
 
       {status && <p style={{ marginTop: '15px', color: status.includes('Error') ? '#ef4444' : '#166534', fontWeight: 'bold' }}>{status}</p>}
 
