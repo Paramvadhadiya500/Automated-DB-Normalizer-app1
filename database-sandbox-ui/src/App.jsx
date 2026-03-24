@@ -1,28 +1,24 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import ReactFlow, { Background, Controls, useNodesState, useEdgesState, addEdge } from 'reactflow';
 import 'reactflow/dist/style.css';
 import TableNode from './TableNode';
 import CloudDashboard from './CloudDashboard';
 
-// 🛑 Custom Nodes/Edges defined OUTSIDE to prevent Vite warnings
 const customNodeTypes = { customTable: TableNode };
 const initialEdgeTypes = {}; 
 
 export default function App() {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  // 💾 1. PULL FROM LOCAL STORAGE ON LOAD
+  const [nodes, setNodes, onNodesChange] = useNodesState(() => JSON.parse(localStorage.getItem('app-nodes')) || []);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(() => JSON.parse(localStorage.getItem('app-edges')) || []);
+  const [dbMode, setDbMode] = useState(() => localStorage.getItem('app-dbMode') || "sql"); 
   
-  const [dbMode, setDbMode] = useState("sql"); 
   const [isSecOpsMode, setIsSecOpsMode] = useState(false);
   const [isUnderAttack, setIsUnderAttack] = useState(false);
-
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
-
-  // 🧠 NORMALIZATION AI STATE RESTORED
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
-
   const [newColName, setNewColName] = useState("");
   const [newColType, setNewColType] = useState("INT");
   const [isPk, setIsPk] = useState(false);
@@ -30,10 +26,15 @@ export default function App() {
 
   const selectedNode = nodes.find(n => n.id === selectedNodeId);
 
+  // 💾 2. SAVE TO LOCAL STORAGE ON EVERY CHANGE
+  useEffect(() => { localStorage.setItem('app-nodes', JSON.stringify(nodes)); }, [nodes]);
+  useEffect(() => { localStorage.setItem('app-edges', JSON.stringify(edges)); }, [edges]);
+  useEffect(() => { localStorage.setItem('app-dbMode', dbMode); }, [dbMode]);
+
   const onNodeClick = useCallback((event, node) => {
     setSelectedNodeId(node.id);
     setIsPanelOpen(true);
-    setAnalysisResult(null); // Clear old analysis when opening a new table
+    setAnalysisResult(null);
   }, []);
 
   const closePanel = () => {
@@ -126,21 +127,17 @@ export default function App() {
     setEdges((eds) => addEdge(styledEdge, eds));
   }, [setEdges, dbMode]);
 
-  // 🧠 RESTORED NORMALIZATION ENGINE FUNCTION
   const analyzeNormalization = async () => {
     if (!selectedNode) return;
     setIsAnalyzing(true);
     setAnalysisResult(null);
     try {
-      // Connects to your Python AI Analysis endpoint!
       const response = await fetch('http://localhost:8000/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tables: [selectedNode.data.schema], relationships: edges })
       });
       const data = await response.json();
-      
-      // Extract the analysis text based on how your backend returns it
       const resultText = data.analysis || data.message || JSON.stringify(data);
       setAnalysisResult(resultText);
     } catch (error) {
@@ -192,14 +189,11 @@ export default function App() {
             ))}
           </div>
 
-          {/* 🧠 UI RESTORED: THE AI NORMALIZATION BUTTON */}
           {dbMode === 'sql' && (
             <div style={{ marginBottom: '20px' }}>
               <button onClick={analyzeNormalization} disabled={isAnalyzing} style={{ width: '100%', padding: '10px', backgroundColor: '#f59e0b', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
                 {isAnalyzing ? "🧠 AI Analyzing..." : "🧠 AI Schema Analysis (1NF/2NF/3NF)"}
               </button>
-              
-              {/* Box that displays the AI Response */}
               {analysisResult && (
                 <div style={{ marginTop: '10px', padding: '12px', backgroundColor: isSecOpsMode ? '#422006' : '#fef3c7', color: isSecOpsMode ? '#fde68a' : '#92400e', borderRadius: '6px', border: `1px solid ${isSecOpsMode ? '#78350f' : '#fcd34d'}`, fontSize: '13px', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
                   {analysisResult}

@@ -3,10 +3,12 @@ import React, { useState, useEffect } from 'react';
 const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, setIsUnderAttack, nodes, setNodes, setEdges }) => {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [dbInfo, setDbInfo] = useState(null);
-  const [dbName, setDbName] = useState("youshouuld"); // Updated to match your screenshot!
-  const [dbEngine, setDbEngine] = useState("mysql");
-  const [vpcId, setVpcId] = useState("");
+  
+  // 💾 1. PULL CLOUD DATA FROM LOCAL STORAGE ON LOAD
+  const [dbName, setDbName] = useState(() => localStorage.getItem('cloud-dbName') || "youshouuld");
+  const [dbEngine, setDbEngine] = useState(() => localStorage.getItem('cloud-dbEngine') || "mysql");
+  const [vpcId, setVpcId] = useState(() => localStorage.getItem('cloud-vpcId') || "");
+  const [dbInfo, setDbInfo] = useState(() => JSON.parse(localStorage.getItem('cloud-dbInfo')) || null);
 
   const [showInjector, setShowInjector] = useState(false);
   const [jsonData, setJsonData] = useState('{\n  "id": "test_user_01",\n  "name": "Nensi"\n}');
@@ -21,6 +23,12 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
 
   const [securityReport, setSecurityReport] = useState(null);
   const actualEngine = dbMode === 'dynamodb' ? 'dynamodb' : dbEngine;
+
+  // 💾 2. SAVE CLOUD DATA TO LOCAL STORAGE ON EVERY CHANGE
+  useEffect(() => { localStorage.setItem('cloud-dbName', dbName); }, [dbName]);
+  useEffect(() => { localStorage.setItem('cloud-dbEngine', dbEngine); }, [dbEngine]);
+  useEffect(() => { localStorage.setItem('cloud-vpcId', vpcId); }, [vpcId]);
+  useEffect(() => { localStorage.setItem('cloud-dbInfo', JSON.stringify(dbInfo)); }, [dbInfo]);
 
   const calculateScore = () => {
     if (!nodes || nodes.length === 0) return 0;
@@ -95,7 +103,8 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
     try {
       const response = await fetch(`http://localhost:8000/delete-aws-db?db_name=${dbName}&db_engine=${actualEngine}`, { method: 'DELETE' });
       const data = await response.json();
-      setStatus(data.message); setDbInfo(null);
+      setStatus(data.message); 
+      setDbInfo(null); // This clears the local storage automatically via useEffect!
     } catch (error) { setStatus("Error deleting database."); }
     setLoading(false);
   };
@@ -207,7 +216,6 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
       </div>
       
       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-        {/* 🚀 THE BUTTON TEXT FIX IS HERE! */}
         <button onClick={deployToAWS} disabled={loading} style={{ padding: '10px 15px', backgroundColor: dbMode === 'dynamodb' ? '#8b5cf6' : '#f59e0b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
           🚀 Deploy {dbMode === 'dynamodb' ? 'DYNAMODB' : dbEngine.toUpperCase()}
         </button>

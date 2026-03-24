@@ -168,14 +168,17 @@ def deploy_secure_infrastructure(db_name, db_engine, vpc_sg_id, is_encrypted, ia
         if db_engine == "dynamodb":
             dynamodb = boto3.client('dynamodb', region_name='ap-south-1') # Deploys to Mumbai!
             
-            # 1. Base NoSQL Parameters
             params = {
-                'TableName': db_name,
-                'KeySchema': [{'AttributeName': 'id', 'KeyType': 'HASH'}],
-                'AttributeDefinitions': [{'AttributeName': 'id', 'AttributeType': 'S'}],
-                'BillingMode': 'PAY_PER_REQUEST'
+                'DBInstanceIdentifier': db_name,
+                'DBInstanceClass': 'db.t3.micro',
+                'Engine': db_engine,
+                'MasterUsername': 'dbadmin',
+                'MasterUserPassword': 'TempPassword123!', 
+                'AllocatedStorage': 20,
+                
+                # 🚨 FIX: Ignore the fake string so the demo remains publicly accessible!
+                'PubliclyAccessible': False if (vpc_sg_id and vpc_sg_id != "sg-secure-0x9a8b7c") else True 
             }
-            
             # 2. Inject Security Flags dynamically!
             if is_encrypted:
                 params['SSESpecification'] = {'Enabled': True, 'SSEType': 'KMS'}

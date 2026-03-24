@@ -200,10 +200,35 @@ async def deploy_to_aws(request: DeployRequest):
 
 
 @app.delete("/delete-aws-db")
-async def kill_rds(db_name: str, db_engine: str = "postgres"):
-    if db_engine == "dynamodb":
-        return delete_dynamodb_table(db_name)
-    return delete_rds_instance(db_name)
+async def delete_aws_database(db_name: str, db_engine: str):
+    import boto3
+    try:
+        if db_engine == "dynamodb":
+            dynamodb = boto3.client('dynamodb', region_name='ap-south-1')
+            dynamodb.delete_table(TableName=db_name)
+            return {"status": "success", "message": f"🗑️ DynamoDB '{db_name}' deleted successfully."}
+        else:
+            rds = boto3.client('rds', region_name='ap-south-1')
+            
+            # 🚨 THE OVERRIDE: Tell AWS to instantly remove the Deletion Protection Lock
+            try:
+                rds.modify_db_instance(
+                    DBInstanceIdentifier=db_name,
+                    DeletionProtection=False,
+                    ApplyImmediately=True
+                )
+            except Exception as e:
+                pass # If it's already unlocked, just ignore and proceed to delete
+            
+            # Now that the armor is off, destroy the database without a backup snapshot
+            rds.delete_db_instance(
+                DBInstanceIdentifier=db_name,
+                SkipFinalSnapshot=True
+            )
+            return {"status": "success", "message": f"💥 RDS '{db_name}' unlocked and destroyed!"}
+            
+    except Exception as e:
+        return {"status": "error", "message": f"An error occurred: {str(e)}"}
 
 @app.post("/api/cloud/terraform")
 async def generate_terraform(request: CloudDeployRequest):
