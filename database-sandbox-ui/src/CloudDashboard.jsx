@@ -1,19 +1,13 @@
 import React, { useState, useEffect } from 'react';
 
-
 const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, setIsUnderAttack, nodes, setNodes, setEdges }) => {
-  // 💰 FINOPS STATE (Moved INSIDE the component where React expects it!)
   const [finopsData, setFinopsData] = useState(null);
   const [isEstimating, setIsEstimating] = useState(false);
-
+  const [crudFramework, setCrudFramework] = useState("express");
+  const [isGeneratingCrud, setIsGeneratingCrud] = useState(false);
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   
-  
-// ⚡ CRUD GENERATOR STATE
-  const [crudFramework, setCrudFramework] = useState("express");
-  const [isGeneratingCrud, setIsGeneratingCrud] = useState(false);
-  // 💾 1. PULL CLOUD DATA FROM LOCAL STORAGE ON LOAD
   const [dbName, setDbName] = useState(() => localStorage.getItem('cloud-dbName') || "youshouuld");
   const [dbEngine, setDbEngine] = useState(() => localStorage.getItem('cloud-dbEngine') || "mysql");
   const [vpcId, setVpcId] = useState(() => localStorage.getItem('cloud-vpcId') || "");
@@ -29,11 +23,10 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
   const [iamAuth, setIamAuth] = useState(false);
   const [hasBackups, setHasBackups] = useState(false);
   const [deletionLock, setDeletionLock] = useState(false);
-
   const [securityReport, setSecurityReport] = useState(null);
+  
   const actualEngine = dbMode === 'dynamodb' ? 'dynamodb' : dbEngine;
 
-  // 💾 2. SAVE CLOUD DATA TO LOCAL STORAGE ON EVERY CHANGE
   useEffect(() => { localStorage.setItem('cloud-dbName', dbName); }, [dbName]);
   useEffect(() => { localStorage.setItem('cloud-dbEngine', dbEngine); }, [dbEngine]);
   useEffect(() => { localStorage.setItem('cloud-vpcId', vpcId); }, [vpcId]);
@@ -64,81 +57,33 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
     }
   }, [isSecured, isSecOpsMode, setNodes, setEdges, setIsUnderAttack]);
 
-  // 💰 3. THE FINOPS API CALL FUNCTION
   const runFinOpsEstimate = async () => {
-    setIsEstimating(true);
-    setFinopsData(null);
-    
+    setIsEstimating(true); setFinopsData(null);
     try {
-      const payload = {
-        database_type: dbMode === 'sql' ? 'relational' : 'nosql',
-        engine: dbMode === 'sql' ? dbEngine : 'dynamodb',
-        multi_az: hasBackups, // Assuming backups imply a more robust setup for now
-        backup_enabled: hasBackups
-      };
-      
-      const response = await fetch('http://localhost:8000/api/finops/estimate', {
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify(payload)
-      });
+      const payload = { database_type: dbMode === 'sql' ? 'relational' : 'nosql', engine: dbMode === 'sql' ? dbEngine : 'dynamodb', multi_az: hasBackups, backup_enabled: hasBackups };
+      const response = await fetch('http://localhost:8000/api/finops/estimate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await response.json();
-      
-      if (data.status === 'success') {
-        setFinopsData(data.data);
-      } else {
-        alert("FinOps Error: " + data.message);
-      }
-    } catch (error) {
-      alert("Could not connect to FinOps Engine.");
-    }
-    
+      if (data.status === 'success') { setFinopsData(data.data); } else { alert("FinOps Error: " + data.message); }
+    } catch (error) { alert("Could not connect to FinOps Engine."); }
     setIsEstimating(false);
   };
 
-  // ⚡ 4. THE CRUD API GENERATOR CALL
   const downloadCrudApi = async () => {
-    if (!nodes || nodes.length === 0) {
-      alert("Please add some tables to the canvas first!");
-      return;
-    }
-    
-    setIsGeneratingCrud(true);
-    setStatus(`Generating ${crudFramework === 'express' ? 'Node.js' : 'FastAPI'} backend...`);
-    
+    if (!nodes || nodes.length === 0) { alert("Please add some tables to the canvas first!"); return; }
+    setIsGeneratingCrud(true); setStatus(`Generating ${crudFramework === 'express' ? 'Node.js' : 'FastAPI'} backend...`);
     try {
-      const response = await fetch('http://localhost:8000/api/generate-crud', {
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ framework: crudFramework, nodes: nodes })
-      });
+      const response = await fetch('http://localhost:8000/api/generate-crud', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ framework: crudFramework, nodes: nodes }) });
       const data = await response.json();
-      
       if (data.status === 'success') {
-        // Create a downloadable file from the AI's code!
         const blob = new Blob([data.code], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); 
-        a.href = url; 
-        a.download = data.filename;
-        document.body.appendChild(a); 
-        a.click(); 
-        document.body.removeChild(a); 
-        URL.revokeObjectURL(url);
-        
+        const a = document.createElement('a'); a.href = url; a.download = data.filename;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
         setStatus(`✅ ${data.filename} generated successfully!`);
-      } else {
-        alert("Generator Error: " + data.message);
-        setStatus("Generation failed.");
-      }
-    } catch (error) {
-      alert("Could not connect to API Generator.");
-      setStatus("Generation failed.");
-    }
-    
+      } else { alert("Generator Error: " + data.message); setStatus("Generation failed."); }
+    } catch (error) { alert("Could not connect to API Generator."); setStatus("Generation failed."); }
     setIsGeneratingCrud(false);
   };
-
 
   const deployToAWS = async () => {
     setLoading(true); setStatus("Deploying...");
@@ -155,17 +100,9 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
     setStatus("Checking AWS Status...");
     try {
       const response = await fetch(`http://localhost:8000/check-aws-status?db_name=${dbName}&db_engine=${actualEngine}`);
-      if (!response.ok) {
-         setStatus(`Error: Backend returned ${response.status}`);
-         return;
-      }
-      const data = await response.json();
-      setDbInfo(data);
-      setStatus(`Status Updated for ${dbName}`);
-    } catch (error) { 
-      console.error(error);
-      setStatus("Error: Cannot reach Python backend."); 
-    }
+      if (!response.ok) { setStatus(`Error: Backend returned ${response.status}`); return; }
+      const data = await response.json(); setDbInfo(data); setStatus(`Status Updated for ${dbName}`);
+    } catch (error) { setStatus("Error: Cannot reach Python backend."); }
   };
 
   const downloadTerraform = async () => {
@@ -187,9 +124,7 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
     setLoading(true); setStatus("Deleting...");
     try {
       const response = await fetch(`http://localhost:8000/delete-aws-db?db_name=${dbName}&db_engine=${actualEngine}`, { method: 'DELETE' });
-      const data = await response.json();
-      setStatus(data.message); 
-      setDbInfo(null); // This clears the local storage automatically via useEffect!
+      const data = await response.json(); setStatus(data.message); setDbInfo(null);
     } catch (error) { setStatus("Error deleting database."); }
     setLoading(false);
   };
@@ -198,10 +133,7 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
     if (!dbInfo || !dbInfo.endpoint) { alert("Wait for the database to become 'Available' first!"); return; }
     setMigrationStatus("Migrating Schema...");
     try {
-      const response = await fetch('http://localhost:8000/api/cloud/migrate', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ endpoint: dbInfo.endpoint, db_engine: actualEngine, nodes: nodes })
-      });
+      const response = await fetch('http://localhost:8000/api/cloud/migrate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endpoint: dbInfo.endpoint, db_engine: actualEngine, nodes: nodes }) });
       const data = await response.json();
       setMigrationStatus(data.status === 'success' ? data.message : `❌ ${data.message}`);
     } catch (error) { setMigrationStatus("❌ Cannot reach Python backend to migrate."); }
@@ -211,12 +143,8 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
     setInsertStatus("Injecting...");
     try {
       const parsedPayload = JSON.parse(jsonData);
-      const response = await fetch('http://localhost:8000/api/cloud/insert', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ db_name: dbName, db_engine: actualEngine, payload: parsedPayload })
-      });
-      const data = await response.json();
-      setInsertStatus(data.status === 'success' ? `✅ ${data.message}` : `❌ ${data.message}`);
+      const response = await fetch('http://localhost:8000/api/cloud/insert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ db_name: dbName, db_engine: actualEngine, payload: parsedPayload }) });
+      const data = await response.json(); setInsertStatus(data.status === 'success' ? `✅ ${data.message}` : `❌ ${data.message}`);
     } catch (error) { setInsertStatus("❌ Invalid JSON format! Check your syntax."); }
   };
 
@@ -300,55 +228,24 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
         )}
       </div>
       
-      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-        <button onClick={deployToAWS} disabled={loading} style={{ padding: '10px 15px', backgroundColor: dbMode === 'dynamodb' ? '#8b5cf6' : '#f59e0b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
-          🚀 Deploy {dbMode === 'dynamodb' ? 'DYNAMODB' : dbEngine.toUpperCase()}
-        </button>
-        <button onClick={checkStatus} style={{ padding: '10px 15px', backgroundColor: '#1e293b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>🔄 Refresh Status</button>
-        
-        {/* 💰 FINOPS BUTTON ADDED HERE */}
-        <button 
-          onClick={runFinOpsEstimate} 
-          disabled={isEstimating} 
-          style={{ padding: '10px 15px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}
-        >
-          {isEstimating ? "🧮 Calculating..." : "💰 Estimate AWS Cost"}
-        </button>
-
-        <button onClick={downloadTerraform} style={{ padding: '10px 15px', backgroundColor: '#64748b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>🏗️ Export Terraform</button>
-        <button onClick={deleteDatabase} disabled={loading} style={{ padding: '10px 15px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', marginLeft: 'auto' }}>🗑️ Destroy Infra</button>
-      </div>
-
-
+      {/* 👇 FIXED BUTTON ROW: ONLY ONE EXISTS NOW 👇 */}
       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
         <button onClick={deployToAWS} disabled={loading} style={{ padding: '10px 15px', backgroundColor: dbMode === 'dynamodb' ? '#8b5cf6' : '#f59e0b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
           🚀 Deploy {dbMode === 'dynamodb' ? 'DYNAMODB' : dbEngine.toUpperCase()}
         </button>
         <button onClick={checkStatus} style={{ padding: '10px 15px', backgroundColor: '#1e293b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>🔄 Refresh Status</button>
-        
-        {/* 💰 FINOPS BUTTON */}
         <button onClick={runFinOpsEstimate} disabled={isEstimating} style={{ padding: '10px 15px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
           {isEstimating ? "🧮 Calculating..." : "💰 Estimate AWS Cost"}
         </button>
-
         <button onClick={downloadTerraform} style={{ padding: '10px 15px', backgroundColor: '#64748b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>🏗️ Export Terraform</button>
 
-        {/* ⚡ NEW CRUD GENERATOR UI */}
         {dbMode === 'sql' && (
           <div style={{ display: 'flex', border: '1px solid #cbd5e1', borderRadius: '5px', overflow: 'hidden', marginLeft: '10px' }}>
-            <select 
-              value={crudFramework} 
-              onChange={(e) => setCrudFramework(e.target.value)} 
-              style={{ padding: '10px', border: 'none', borderRight: '1px solid #cbd5e1', outline: 'none', backgroundColor: 'white', cursor: 'pointer', fontWeight: 'bold', color: '#475569' }}
-            >
+            <select value={crudFramework} onChange={(e) => setCrudFramework(e.target.value)} style={{ padding: '10px', border: 'none', borderRight: '1px solid #cbd5e1', outline: 'none', backgroundColor: 'white', cursor: 'pointer', fontWeight: 'bold', color: '#475569' }}>
               <option value="express">Node.js (Express)</option>
               <option value="fastapi">Python (FastAPI)</option>
             </select>
-            <button 
-              onClick={downloadCrudApi} 
-              disabled={isGeneratingCrud} 
-              style={{ padding: '10px 15px', backgroundColor: '#8b5cf6', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
-            >
+            <button onClick={downloadCrudApi} disabled={isGeneratingCrud} style={{ padding: '10px 15px', backgroundColor: '#8b5cf6', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>
               {isGeneratingCrud ? "⏳ Writing Code..." : "⚡ Generate API File"}
             </button>
           </div>
@@ -356,51 +253,36 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
 
         <button onClick={deleteDatabase} disabled={loading} style={{ padding: '10px 15px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', marginLeft: 'auto' }}>🗑️ Destroy Infra</button>
       </div>
+      {/* 👆 FIXED BUTTON ROW 👆 */}
 
-      {/* 💰 FINOPS UI WIDGET ADDED HERE */}
       {finopsData && (
         <div style={{ marginTop: '20px', padding: '20px', backgroundColor: '#ecfdf5', border: '2px solid #10b981', borderRadius: '8px', display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
-          
-          {/* Left Column: Cost Summary */}
           <div style={{ flex: '1 1 300px' }}>
             <h3 style={{ margin: '0 0 10px 0', color: '#047857', display: 'flex', alignItems: 'center', gap: '8px' }}>
               AWS FinOps Estimate <span style={{ fontSize: '12px', padding: '2px 6px', backgroundColor: '#d1fae5', borderRadius: '12px' }}>{finopsData.region}</span>
             </h3>
-            
             <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#065f46', marginBottom: '10px' }}>
               ${finopsData.estimated_monthly_cost_usd} <span style={{ fontSize: '14px', fontWeight: 'normal' }}>/ month</span>
             </div>
-            
             {finopsData.free_tier_analysis?.eligible && (
                <div style={{ padding: '8px 12px', backgroundColor: '#d1fae5', color: '#047857', borderRadius: '6px', fontSize: '13px', fontWeight: 'bold', display: 'inline-block' }}>
                  🎉 Free Tier Eligible ({finopsData.free_tier_analysis.free_tier_coverage_percentage}% Covered)
-                 <div style={{ fontSize: '11px', fontWeight: 'normal', marginTop: '4px' }}>
-                   Est. Cost after Free Tier: ${finopsData.free_tier_analysis.estimated_cost_after_free_tier}
-                 </div>
+                 <div style={{ fontSize: '11px', fontWeight: 'normal', marginTop: '4px' }}>Est. Cost after Free Tier: ${finopsData.free_tier_analysis.estimated_cost_after_free_tier}</div>
                </div>
             )}
           </div>
-
-          {/* Right Column: Optimization Tips */}
           <div style={{ flex: '2 1 400px', backgroundColor: 'white', padding: '15px', borderRadius: '8px', border: '1px solid #a7f3d0' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <h4 style={{ margin: 0, color: '#047857' }}>Optimization Recommendations</h4>
-              <div style={{ fontSize: '12px', fontWeight: 'bold', color: finopsData.cost_efficiency_score > 70 ? '#10b981' : '#f59e0b' }}>
-                Efficiency Score: {finopsData.cost_efficiency_score}/100
-              </div>
+              <div style={{ fontSize: '12px', fontWeight: 'bold', color: finopsData.cost_efficiency_score > 70 ? '#10b981' : '#f59e0b' }}>Efficiency Score: {finopsData.cost_efficiency_score}/100</div>
             </div>
-            
             <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '13px', color: '#064e3b', lineHeight: '1.6' }}>
-              {finopsData.optimization_recommendations?.map((tip, i) => (
-                <li key={i}>{tip}</li>
-              ))}
+              {finopsData.optimization_recommendations?.map((tip, i) => <li key={i}>{tip}</li>)}
             </ul>
-            
             <div style={{ marginTop: '15px', paddingTop: '10px', borderTop: '1px solid #e2e8f0', fontSize: '12px', color: '#64748b' }}>
               <strong>Scalability Projection:</strong> If usage doubles, expect costs around ${finopsData.scalability_cost_projection?.expected_cost_if_usage_doubles}.
             </div>
           </div>
-          
         </div>
       )}
 
@@ -416,14 +298,12 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
                 <p style={{ margin: '0 0 5px 0' }}><strong>AWS Status:</strong> <span style={{ color: dbInfo.status?.toLowerCase() === 'available' || dbInfo.status?.toLowerCase() === 'active' ? '#10b981' : '#f59e0b' }}>{dbInfo.status?.toUpperCase() || 'UNKNOWN'}</span></p>
                 <p style={{ margin: '0 0 5px 0' }}><strong>Endpoint:</strong> {dbInfo.endpoint || 'Not ready yet'}</p>
               </div>
-
               {dbMode === 'sql' && dbInfo.status?.toLowerCase() === 'available' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <span style={{ fontSize: '12px', fontWeight: 'bold', color: migrationStatus?.includes('❌') ? '#ef4444' : '#10b981' }}>{migrationStatus}</span>
                   <button onClick={pushSchemaToAWS} style={{ padding: '10px 15px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>🏗️ Push Schema to Live DB</button>
                 </div>
               )}
-
               {dbMode === 'dynamodb' && dbInfo.status?.toLowerCase() === 'active' && (
                 <button onClick={() => setShowInjector(!showInjector)} style={{ padding: '8px 12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
                   {showInjector ? "Close Injector" : "💉 Inject Test Data"}
