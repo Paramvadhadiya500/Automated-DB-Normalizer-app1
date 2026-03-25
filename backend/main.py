@@ -778,3 +778,49 @@ async def get_real_metrics(endpoint: str, engine: str):
         metrics["error"] = str(e)
         
     return {"status": "success", "data": metrics}
+
+    # --- 15. 🔄 SCHEMA MIGRATION ENGINE ---
+class MigrationExecutionRequest(BaseModel):
+    endpoint: str
+    db_engine: str
+    sql_statements: list
+
+@app.post("/api/cloud/execute-migration")
+async def execute_live_migration(request: MigrationExecutionRequest):
+    master_user = 'dbadmin'
+    master_pass = 'TempPassword123!'
+    engine = request.db_engine.lower()
+    
+    if not request.sql_statements:
+        return {"status": "success", "message": "No SQL to execute."}
+        
+    try:
+        if engine in ["mysql", "mariadb"]:
+            connection = pymysql.connect(host=request.endpoint, user=master_user, password=master_pass, port=3306)
+        elif engine == "postgres":
+            connection = psycopg2.connect(host=request.endpoint, user=master_user, password=master_pass, port=5432)
+        else:
+            return {"status": "error", "message": "Unsupported engine"}
+
+        # START TRANSACTION
+        with connection.cursor() as cursor:
+            if engine in ["mysql", "mariadb"]:
+                cursor.execute("CREATE DATABASE IF NOT EXISTS my_cloud_app;")
+                cursor.execute("USE my_cloud_app;")
+                
+            for statement in request.sql_statements:
+                if statement.strip(): 
+                    cursor.execute(statement)
+        
+        # Commit transaction if all SQL succeeds
+        connection.commit()
+        connection.close()
+        
+        return {"status": "success", "message": f"✅ Safely applied {len(request.sql_statements)} migrations!"}
+
+    except Exception as e:
+        # If ANY command fails, rollback everything
+        if 'connection' in locals() and connection.open:
+            connection.rollback()
+            connection.close()
+        return {"status": "error", "message": f"Migration Aborted & Rolled Back. Error: {str(e)}"}
