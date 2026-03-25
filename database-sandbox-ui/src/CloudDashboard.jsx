@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+// 📡 IMPORT RECHARTS
+//import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, setIsUnderAttack, nodes, setNodes, setEdges }) => {
   const [finopsData, setFinopsData] = useState(null);
@@ -25,6 +27,11 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
   const [deletionLock, setDeletionLock] = useState(false);
   const [securityReport, setSecurityReport] = useState(null);
   
+  // 📡 NEW: OBSERVABILITY STATE
+  const [isObserving, setIsObserving] = useState(false);
+  const [metricsHistory, setMetricsHistory] = useState([]);
+  const [currentMetrics, setCurrentMetrics] = useState(null);
+
   const actualEngine = dbMode === 'dynamodb' ? 'dynamodb' : dbEngine;
 
   useEffect(() => { localStorage.setItem('cloud-dbName', dbName); }, [dbName]);
@@ -56,6 +63,28 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
       setEdges(eds => eds.map(edge => ({ ...edge, animated: true, style: { stroke: '#10b981', strokeWidth: 3 } })));
     }
   }, [isSecured, isSecOpsMode, setNodes, setEdges, setIsUnderAttack]);
+
+  // 📡 NEW: REAL-TIME POLLING EFFECT
+  useEffect(() => {
+    let interval;
+    if (isObserving && dbInfo && dbInfo.endpoint) {
+      interval = setInterval(async () => {
+        try {
+          const res = await fetch(`http://localhost:8000/api/observability/metrics?endpoint=${dbInfo.endpoint}&engine=${actualEngine}`);
+          const result = await res.json();
+          if (result.status === 'success') {
+            setCurrentMetrics(result.data);
+            setMetricsHistory(prev => {
+              const newHistory = [...prev, result.data];
+              if (newHistory.length > 15) return newHistory.slice(newHistory.length - 15); // Keep last 15 data points
+              return newHistory;
+            });
+          }
+        } catch (e) { console.error("Observability connection failed"); }
+      }, 3000); // Polls real database every 3 seconds
+    }
+    return () => clearInterval(interval);
+  }, [isObserving, dbInfo, actualEngine]);
 
   const runFinOpsEstimate = async () => {
     setIsEstimating(true); setFinopsData(null);
@@ -124,7 +153,7 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
     setLoading(true); setStatus("Deleting...");
     try {
       const response = await fetch(`http://localhost:8000/delete-aws-db?db_name=${dbName}&db_engine=${actualEngine}`, { method: 'DELETE' });
-      const data = await response.json(); setStatus(data.message); setDbInfo(null);
+      const data = await response.json(); setStatus(data.message); setDbInfo(null); setIsObserving(false);
     } catch (error) { setStatus("Error deleting database."); }
     setLoading(false);
   };
@@ -228,7 +257,6 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
         )}
       </div>
       
-      {/* 👇 FIXED BUTTON ROW: ONLY ONE EXISTS NOW 👇 */}
       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
         <button onClick={deployToAWS} disabled={loading} style={{ padding: '10px 15px', backgroundColor: dbMode === 'dynamodb' ? '#8b5cf6' : '#f59e0b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
           🚀 Deploy {dbMode === 'dynamodb' ? 'DYNAMODB' : dbEngine.toUpperCase()}
@@ -253,7 +281,6 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
 
         <button onClick={deleteDatabase} disabled={loading} style={{ padding: '10px 15px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', marginLeft: 'auto' }}>🗑️ Destroy Infra</button>
       </div>
-      {/* 👆 FIXED BUTTON ROW 👆 */}
 
       {finopsData && (
         <div style={{ marginTop: '20px', padding: '20px', backgroundColor: '#ecfdf5', border: '2px solid #10b981', borderRadius: '8px', display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
@@ -279,9 +306,6 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
             <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '13px', color: '#064e3b', lineHeight: '1.6' }}>
               {finopsData.optimization_recommendations?.map((tip, i) => <li key={i}>{tip}</li>)}
             </ul>
-            <div style={{ marginTop: '15px', paddingTop: '10px', borderTop: '1px solid #e2e8f0', fontSize: '12px', color: '#64748b' }}>
-              <strong>Scalability Projection:</strong> If usage doubles, expect costs around ${finopsData.scalability_cost_projection?.expected_cost_if_usage_doubles}.
-            </div>
           </div>
         </div>
       )}
@@ -298,15 +322,21 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
                 <p style={{ margin: '0 0 5px 0' }}><strong>AWS Status:</strong> <span style={{ color: dbInfo.status?.toLowerCase() === 'available' || dbInfo.status?.toLowerCase() === 'active' ? '#10b981' : '#f59e0b' }}>{dbInfo.status?.toUpperCase() || 'UNKNOWN'}</span></p>
                 <p style={{ margin: '0 0 5px 0' }}><strong>Endpoint:</strong> {dbInfo.endpoint || 'Not ready yet'}</p>
               </div>
+
               {dbMode === 'sql' && dbInfo.status?.toLowerCase() === 'available' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <span style={{ fontSize: '12px', fontWeight: 'bold', color: migrationStatus?.includes('❌') ? '#ef4444' : '#10b981' }}>{migrationStatus}</span>
                   <button onClick={pushSchemaToAWS} style={{ padding: '10px 15px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>🏗️ Push Schema to Live DB</button>
                 </div>
               )}
-              {dbMode === 'dynamodb' && dbInfo.status?.toLowerCase() === 'active' && (
-                <button onClick={() => setShowInjector(!showInjector)} style={{ padding: '8px 12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
-                  {showInjector ? "Close Injector" : "💉 Inject Test Data"}
+
+              {/* 📡 NEW: OBSERVABILITY TOGGLE BUTTON */}
+              {(dbInfo.status?.toLowerCase() === 'available' || dbInfo.status?.toLowerCase() === 'active') && (
+                <button 
+                  onClick={() => setIsObserving(!isObserving)} 
+                  style={{ padding: '10px 20px', backgroundColor: isObserving ? '#ef4444' : '#0ea5e9', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}
+                >
+                  {isObserving ? "⏹️ Stop Telemetry" : "📡 Start Live Observability"}
                 </button>
               )}
             </div>
@@ -314,14 +344,69 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
         </div>
       )}
 
-      {showInjector && (
-        <div style={{ marginTop: '15px', padding: '15px', backgroundColor: '#1e293b', borderRadius: '8px', border: '1px solid #334155' }}>
-          <h4 style={{ margin: '0 0 10px 0', color: '#10b981' }}>Live AWS Data Injector</h4>
-          <p style={{ margin: '0 0 10px 0', fontSize: '12px', color: '#94a3b8' }}>Write standard JSON. The "id" field is required as the Partition Key.</p>
-          <textarea value={jsonData} onChange={(e) => setJsonData(e.target.value)} style={{ width: '100%', height: '120px', padding: '10px', borderRadius: '5px', backgroundColor: '#0f172a', color: '#38bdf8', fontFamily: 'monospace', border: '1px solid #475569', fontSize: '13px', resize: 'vertical' }} />
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px' }}>
-            <span style={{ fontSize: '13px', fontWeight: 'bold', color: insertStatus?.includes('❌') ? '#ef4444' : '#10b981' }}>{insertStatus}</span>
-            <button onClick={injectData} style={{ padding: '8px 16px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Send to AWS</button>
+      {/* 📡 NEW: REAL-TIME OBSERVABILITY DASHBOARD */}
+      {isObserving && (
+        <div style={{ marginTop: '20px', padding: '20px', backgroundColor: '#0f172a', borderRadius: '12px', border: '1px solid #334155', color: 'white', boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #1e293b', paddingBottom: '15px', marginBottom: '20px' }}>
+            <h3 style={{ margin: 0, color: '#38bdf8', display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ width: '10px', height: '10px', backgroundColor: currentMetrics?.status === 'Healthy' ? '#10b981' : '#ef4444', borderRadius: '50%', boxShadow: `0 0 10px ${currentMetrics?.status === 'Healthy' ? '#10b981' : '#ef4444'}` }}></div>
+              Live AWS Telemetry
+            </h3>
+            <span style={{ fontSize: '12px', color: '#94a3b8' }}>Live connection to {dbInfo?.endpoint?.split('.')[0]}</span>
+          </div>
+
+          <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
+            <div style={{ flex: 1, backgroundColor: '#1e293b', padding: '15px', borderRadius: '8px', textAlign: 'center' }}>
+              <div style={{ fontSize: '12px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '1px' }}>Network Latency</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold', color: currentMetrics?.latency_ms > 200 ? '#f59e0b' : '#10b981', margin: '10px 0' }}>
+                {currentMetrics?.latency_ms || 0} <span style={{ fontSize: '16px' }}>ms</span>
+              </div>
+            </div>
+            <div style={{ flex: 1, backgroundColor: '#1e293b', padding: '15px', borderRadius: '8px', textAlign: 'center' }}>
+              <div style={{ fontSize: '12px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '1px' }}>Active DB Threads</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#3b82f6', margin: '10px 0' }}>
+                {currentMetrics?.active_connections || 0}
+              </div>
+            </div>
+            <div style={{ flex: 1, backgroundColor: '#1e293b', padding: '15px', borderRadius: '8px', textAlign: 'center' }}>
+              <div style={{ fontSize: '12px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '1px' }}>API Health</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold', color: currentMetrics?.status === 'Healthy' ? '#10b981' : '#ef4444', margin: '10px 0' }}>
+                {currentMetrics?.status || 'Waiting...'}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '20px', height: '200px' }}>
+            <div style={{ flex: 1, backgroundColor: '#1e293b', padding: '15px', borderRadius: '8px' }}>
+              <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#cbd5e1' }}>Live Query Latency</h4>
+             {/* Replace the Recharts LineChart block with this */}
+<div style={{ flex: 1, backgroundColor: '#1e293b', padding: '15px', borderRadius: '8px', overflow: 'hidden' }}>
+  <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#cbd5e1' }}>Live Query Latency</h4>
+  <div style={{ display: 'flex', alignItems: 'flex-end', height: '150px', gap: '4px' }}>
+    {metricsHistory.map((metric, i) => {
+      // Scale latency to fit the 150px box
+      const heightPercentage = Math.min((metric.latency_ms / 300) * 100, 100);
+      return (
+        <div key={i} style={{ flex: 1, backgroundColor: '#10b981', height: `${heightPercentage}%`, minHeight: '5%', transition: 'height 0.3s ease', opacity: 0.8, borderRadius: '2px 2px 0 0' }}></div>
+      )
+    })}
+  </div>
+</div>
+
+{/* Replace the Recharts AreaChart block with this */}
+<div style={{ flex: 1, backgroundColor: '#1e293b', padding: '15px', borderRadius: '8px', overflow: 'hidden' }}>
+  <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#cbd5e1' }}>Live Active Connections</h4>
+  <div style={{ display: 'flex', alignItems: 'flex-end', height: '150px', gap: '4px' }}>
+    {metricsHistory.map((metric, i) => {
+      // Scale connections to fit the 150px box
+      const heightPercentage = Math.min((metric.active_connections / 20) * 100, 100);
+      return (
+        <div key={i} style={{ flex: 1, backgroundColor: '#3b82f6', height: `${heightPercentage}%`, minHeight: '5%', transition: 'height 0.3s ease', opacity: 0.8, borderRadius: '2px 2px 0 0' }}></div>
+      )
+    })}
+  </div>
+</div>
+            </div>
           </div>
         </div>
       )}

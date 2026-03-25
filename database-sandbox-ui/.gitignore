@@ -22,3 +22,19 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+
+# dependencies
+node_modules/
+
+# production
+build/
+dist/
+
+# environment variables (Keep your AWS keys secret!)
+.env
+.env.local
+
+# misc
+.DS_Store
+npm-debug.log*

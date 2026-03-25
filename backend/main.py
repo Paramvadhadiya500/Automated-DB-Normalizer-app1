@@ -719,3 +719,62 @@ async def generate_crud_api(request: CrudGenerateRequest):
 
     except Exception as e:
         return {"status": "error", "message": f"API Generator Error: {str(e)}"}
+
+
+        # --- 14. 📡 TRUE LIVE OBSERVABILITY TELEMETRY ---
+import time
+
+@app.get("/api/observability/metrics")
+async def get_real_metrics(endpoint: str, engine: str):
+    # Using the exact credentials your AWS deployer used
+    master_user = 'dbadmin'
+    master_pass = 'TempPassword123!'
+    
+    metrics = {
+        "latency_ms": 0,
+        "active_connections": 0,
+        "status": "Healthy",
+        "timestamp": time.strftime('%H:%M:%S')
+    }
+
+    try:
+        if engine.lower() in ["mysql", "mariadb"]:
+            # Connect to live AWS database
+            conn = pymysql.connect(host=endpoint, user=master_user, password=master_pass, port=3306, connect_timeout=3)
+            with conn.cursor() as cursor:
+                # 1. Measure True Network & Query Latency
+                query_start = time.time()
+                cursor.execute("SELECT 1")
+                metrics["latency_ms"] = int((time.time() - query_start) * 1000)
+                
+                # 2. Get True Active Connection Threads
+                cursor.execute("SHOW STATUS LIKE 'Threads_connected'")
+                result = cursor.fetchone()
+                metrics["active_connections"] = int(result[1]) if result else 1
+            conn.close()
+            
+        elif engine.lower() == "postgres":
+            conn = psycopg2.connect(host=endpoint, user=master_user, password=master_pass, port=5432, connect_timeout=3)
+            with conn.cursor() as cursor:
+                query_start = time.time()
+                cursor.execute("SELECT 1")
+                metrics["latency_ms"] = int((time.time() - query_start) * 1000)
+                
+                cursor.execute("SELECT sum(numbackends) FROM pg_stat_database;")
+                result = cursor.fetchone()
+                metrics["active_connections"] = int(result[0]) if result and result[0] else 1
+            conn.close()
+            
+        elif engine.lower() == "dynamodb":
+            # DynamoDB serverless ping
+            dynamo = boto3.client('dynamodb', region_name='ap-south-1')
+            query_start = time.time()
+            dynamo.list_tables(Limit=1)
+            metrics["latency_ms"] = int((time.time() - query_start) * 1000)
+            metrics["active_connections"] = 1 # Serverless doesn't hold TCP connections
+            
+    except Exception as e:
+        metrics["status"] = "Failing"
+        metrics["error"] = str(e)
+        
+    return {"status": "success", "data": metrics}

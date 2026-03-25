@@ -5,6 +5,7 @@ import TableNode from './TableNode';
 import CloudDashboard from './CloudDashboard';
 import { useVersionControl } from './useVersionControl';
 
+// ✅ DEFINED OUTSIDE: No hooks needed! This is completely immune to the React Flow warning.
 const customNodeTypes = { customTable: TableNode };
 const initialEdgeTypes = {}; 
 
