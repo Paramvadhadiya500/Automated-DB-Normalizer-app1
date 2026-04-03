@@ -12,6 +12,9 @@ from typing import List, Optional
 import json
 from pydantic import BaseModel
 import google.generativeai as genai
+import io
+import zipfile
+import base64
 
 
 # 1. 🤖 IMPORT THE NEW AI LIBRARY
@@ -198,28 +201,35 @@ class AWSDeployRequest(BaseModel):
 
 @app.post("/deploy-to-aws")
 async def deploy_to_aws_real(request: AWSDeployRequest):
-    # 2. Security Check
+    # Security Check
     if not request.aws_access_key or not request.aws_secret_key:
         return {"status": "error", "message": "Access Denied: AWS Credentials missing."}
 
     try:
-        # 3. Create a strict, temporary session using the user's provided keys
+        # Create the secure session
         session = boto3.Session(
             aws_access_key_id=request.aws_access_key,
             aws_secret_access_key=request.aws_secret_key,
             region_name=request.aws_region
         )
-        
-        # 4. Initialize the RDS client using THEIR session, not yours
         rds_client = session.client('rds')
 
-        # NOTE: This is where your actual rds_client.create_db_instance() code goes.
-        # It will now execute securely inside THEIR AWS account.
+        # 🔥 THE FIX: Removed the invalid SkipFinalSnapshot parameter!
+        response = rds_client.create_db_instance(
+            DBName='my_cloud_app',                     
+            DBInstanceIdentifier=request.db_name,      
+            AllocatedStorage=20,                       
+            DBInstanceClass='db.t3.micro',             
+            Engine=request.db_engine.lower(),          
+            MasterUsername='dbadmin',                  
+            MasterUserPassword='CloudCanvasPassword123!', 
+            PubliclyAccessible=True                    
+        )
         
-        return {"status": "success", "message": f"✅ Authenticated securely. AWS is currently provisioning {request.db_name}!"}
+        return {"status": "success", "message": f"✅ AWS is officially provisioning {request.db_name}! This takes 3-5 minutes."}
 
     except Exception as e:
-        return {"status": "error", "message": f"AWS Authentication Failed. Check your keys. Error: {str(e)}"}
+        return {"status": "error", "message": f"AWS Error: {str(e)}"}
     
 @app.delete("/delete-aws-db")
 async def delete_aws_database(db_name: str, db_engine: str):
@@ -380,7 +390,7 @@ async def run_schema_migrations(request: MigrationRequest):
     endpoint = request.endpoint
     
     master_user = 'dbadmin'
-    master_pass = 'TempPassword123!'
+    master_pass = 'CloudCanvasPassword123!'
     
     sql_commands = []
     for node in request.nodes:
@@ -396,10 +406,22 @@ async def run_schema_migrations(request: MigrationRequest):
             
         col_defs = []
         primary_keys = []
+        seen_columns = set() # Track duplicates sent by React
         
         for col in columns:
             col_name = col.get("name")
-            data_type = col.get("data_type")
+            
+            # Skip if we already built this exact column
+            if col_name in seen_columns:
+                continue 
+            seen_columns.add(col_name)
+            
+            # Format the data type
+            data_type = col.get("data_type").upper()
+            if data_type == "VARCHAR" or data_type == "STRING":
+                data_type = "VARCHAR(255)"
+                
+            # Add to our SQL lists ONCE
             col_defs.append(f"{col_name} {data_type}")
             if col.get("is_primary_key"):
                 primary_keys.append(col_name)
@@ -495,24 +517,74 @@ async def generate_schema_from_ai(request: AIGenerateRequest):
         return {"status": "error", "message": "Gemini API key is missing!"}
 
     try:
-        system_instruction = """You are a Senior Cloud Database Architect. 
-        The user will give you an idea for a software application. 
-        You MUST design a highly professional, normalized relational database schema for it.
-        
-        CRITICAL RULES:
-        1. Return ONLY a valid JSON array. Do not say "Here is your schema" or write any text outside the JSON.
-        2. Do NOT wrap the response in markdown code blocks (like ```json).
-        3. Follow this EXACT JSON structure for the array:
-        [
-          {
-            "name": "table_name_lowercase",
-            "columns": [
-              {"name": "id", "data_type": "INT", "is_primary_key": true},
-              {"name": "example_col", "data_type": "VARCHAR", "is_primary_key": false}
-            ]
-          }
-        ]
-        """
+        system_instruction = """You are a Senior Cloud Database Architect with deep expertise in relational and NoSQL database design.
+The user will describe a software application or data requirement. Your job is to design a professional,
+production-ready database schema tailored to their use case.
+
+═══════════════════════════════════════════════════════
+OUTPUT RULES — FOLLOW EXACTLY, NO EXCEPTIONS
+═══════════════════════════════════════════════════════
+1. Return ONLY a valid JSON array. No greetings, no explanations, no markdown code fences (no ```json).
+2. The first character of your response MUST be `[` and the last MUST be `]`.
+3. Use this EXACT structure for every table:
+    
+[
+  {
+    "name": "table_name_snake_case",
+    "description": "What this table stores",
+    "db_target": "postgres",
+    "columns": [
+      {
+        "name": "id",
+        "data_type": "SERIAL",
+        "is_primary_key": true,
+        "is_foreign_key": false,
+        "references": null,
+        "nullable": false,
+        "unique": false,
+        "default": null,
+        "index": false,
+        "comment": "Auto-incrementing primary key"
+      }
+    ]
+  }
+]
+
+═══════════════════════════════════════════════════════
+DATABASE-SPECIFIC DATA TYPE RULES
+═══════════════════════════════════════════════════════
+When the user specifies or implies a target database, use ONLY native types for that platform:
+
+- PostgreSQL  → SERIAL / BIGSERIAL, VARCHAR(n), TEXT, BOOLEAN, TIMESTAMPTZ, JSONB, UUID, NUMERIC(p,s)
+- MySQL/MariaDB → INT AUTO_INCREMENT, VARCHAR(n), TEXT, TINYINT(1), DATETIME, JSON, CHAR(36), DECIMAL(p,s)
+- Amazon RDS  → Match the underlying engine (MySQL or PostgreSQL rules above)
+- DynamoDB    → Use NoSQL schema style: partition_key, sort_key, GSI/LSI index hints; note attribute types as S/N/B/BOOL/L/M
+- Generic SQL → Use ANSI SQL types: INTEGER, VARCHAR(n), TEXT, BOOLEAN, TIMESTAMP, DECIMAL(p,s)
+
+═══════════════════════════════════════════════════════
+SCHEMA DESIGN RULES
+═══════════════════════════════════════════════════════
+1. NORMALIZATION: Apply 3NF (Third Normal Form) by default. Flag if denormalization is intentional (e.g., for DynamoDB).
+2. PRIMARY KEYS: Every table must have a primary key. Prefer surrogate keys (SERIAL/UUID) unless a natural key is clearly superior.
+3. FOREIGN KEYS: Always define relationships. Set "references": "other_table.id" for FK columns.
+4. INDEXES: Set "index": true on all FK columns, frequently filtered columns, and unique constraints.
+5. TIMESTAMPS: Include created_at and updated_at on every table that tracks records over time.
+6. NAMING: snake_case for all table and column names. Plural table names (users, orders, products).
+7. NULLABLE: Be explicit — set "nullable": false for required fields, true for optional ones.
+8. SOFT DELETE: Add deleted_at TIMESTAMP (nullable: true) when the domain implies records should not be hard-deleted (e.g., orders, users, invoices).
+9. ENUMS/STATUS fields: Use VARCHAR with a comment listing valid values (e.g., "pending | active | cancelled").
+10. JUNCTION TABLES: For M:N relationships, create a proper join table with its own PK and both FK columns indexed.
+
+═══════════════════════════════════════════════════════
+REASONING APPROACH
+═══════════════════════════════════════════════════════
+Before outputting JSON, silently reason through:
+- What are the core entities?
+- What are the relationships (1:1, 1:N, M:N)?
+- What queries will this schema need to serve efficiently?
+- Are there any domain-specific constraints (e.g., financial precision, audit trail, multi-tenancy)?
+Then output only the final JSON — no reasoning text in the response.
+"""
 
         model = genai.GenerativeModel('gemini-2.5-flash')
         
@@ -650,11 +722,11 @@ async def estimate_cloud_cost(request: FinOpsRequest):
     except Exception as e:
         return {"status": "error", "message": f"FinOps Engine Error: {str(e)}"}
     
-
-    # --- 13. ⚡ AUTO CRUD API GENERATOR ---
+# --- 13. ⚡ FULL-STACK API & CLIENT GENERATOR (.ZIP) ---
 
 class CrudGenerateRequest(BaseModel):
     framework: str  # "express" or "fastapi"
+    db_engine: str  # NEW: "mysql", "postgres", etc.
     nodes: list     # The React Flow nodes
 
 @app.post("/api/generate-crud")
@@ -662,76 +734,92 @@ async def generate_crud_api(request: CrudGenerateRequest):
     if not API_KEY:
         return {"status": "error", "message": "Gemini API key is missing!"}
 
-    # 1. Extract and format the React Flow nodes into the clean JSON the AI expects
+    # 1. Format the React Flow nodes
     tables_for_prompt = []
     for node in request.nodes:
         schema = node.get("data", {}).get("schema")
-        
-        # Skip empty nodes or NoSQL for this specific SQL CRUD generator
         if not schema or schema.get("db_mode") == "dynamodb":
             continue
             
         table_name = schema.get("name")
-        columns = []
-        for col in schema.get("columns", []):
-            columns.append({
-                "name": col.get("name"),
-                "type": col.get("data_type").lower(),
-                "primary_key": col.get("is_primary_key", False)
-            })
+        requires_auth = node.get("data", {}).get("requireAuth", False)
+        columns = [{"name": col.get("name"), "type": col.get("data_type").lower(), "primary_key": col.get("is_primary_key", False)} for col in schema.get("columns", [])]
             
         if table_name and columns:
-            tables_for_prompt.append({
-                "table_name": table_name,
-                "columns": columns
-            })
+            tables_for_prompt.append({"table_name": table_name, "columns": columns, "requires_auth": requires_auth})
 
     if not tables_for_prompt:
-        return {"status": "error", "message": "No valid SQL tables found on the canvas to generate APIs for."}
+        return {"status": "error", "message": "No valid SQL tables found to generate APIs for."}
 
     clean_schema_json = json.dumps({"tables": tables_for_prompt}, indent=2)
 
     try:
-        # 2. Your exact master prompt!
-        system_instruction = f"""You are an expert backend developer.
-        Your task is to automatically generate a complete CRUD API server based on a database schema provided in JSON format.
+        # 2. THE GOD-TIER PROMPT
+        system_instruction = f"""You are an Expert Enterprise Cloud Architect.
+        Generate a full-stack deployment bundle based on the provided JSON schema.
         
-        Generate production-ready backend code that creates CRUD APIs for every table defined in the schema.
-        The user has selected the following backend framework: **{request.framework.upper()}**
+        FRAMEWORK: {request.framework.upper()}
+        DATABASE ENGINE: {request.db_engine.upper()}
         
-        IF EXPRESS SELECTED: Use Node.js, Express, body-parser, cors, dotenv, and parameterized SQL. Route format: /api/tablename
-        IF FASTAPI SELECTED: Use Python, FastAPI, Pydantic, SQLAlchemy. Route format: /tablename
+        CRITICAL RULES:
+        1. DIALECT: You must write SQL and use drivers matching the Database Engine exactly. If MySQL, use `mysql2/promise` and `?` placeholders. If Postgres, use `pg` and `$1` placeholders.
+        2. ENVIRONMENT VARIABLES: NEVER hardcode credentials. You MUST use `process.env.DB_HOST`, `process.env.DB_USER`, `process.env.DB_PASSWORD`, `process.env.DB_NAME`, and `process.env.DB_PORT`.
+        3. AWS SSL & BOOT LOG: In the database connection pool, include `ssl: {{ rejectUnauthorized: false }}`. You MUST include code at the bottom of the file that tests the database connection on server startup and logs "✅ Connected securely to AWS database!"
+        4. CORS & MIDDLEWARE: You MUST include and configure the `cors` middleware (`app.use(cors())`) and `express.json()` so frontends can connect without browser security blocks.
+        5. SECURITY: If "requires_auth" is true for a table, inject JWT middleware into its backend routes, and ensure the frontend `api-client.js` accepts a token parameter.
+        6. DETERMINISTIC FRONTEND NAMING: In `api-client.js`, name your exported functions with strict, predictable camelCase based on the table name. Example for a table named 'menu_items': `getAllMenuItems`, `getMenuItemById`, `createMenuItem`, `updateMenuItem`, `deleteMenuItem`. Do NOT deviate from this pattern.
         
-        Generate CRUD APIs for EACH table: GET all, GET by ID, POST, PUT, DELETE.
-        Map schema types to appropriate database types (integer, string, boolean, etc).
-        
-        OUTPUT RULES:
-        Return ONLY the final code file.
-        Do NOT include explanation.
-        Do NOT include markdown formatting (do not wrap in ```python or ```javascript).
-        Only output raw code.
+        OUTPUT FORMAT (Strict JSON):
+        Return ONLY a raw JSON object with exactly three keys:
+        {{
+          "backend_code": "The raw server.js code",
+          "frontend_code": "The raw api-client.js code with fetch functions",
+          "package_json": "A valid package.json string including express, cors, dotenv, jsonwebtoken, and the correct DB driver (mysql2 or pg)"
+        }}
+        Do not use markdown backticks outside the JSON.
         """
         
-        full_prompt = f"{system_instruction}\n\nINPUT SCHEMA:\n{clean_schema_json}"
-        
-        # 3. Call the AI
+   # 3. Call the AI
         model = genai.GenerativeModel('gemini-2.5-flash')
+        
+        # 👇 ADD THIS EXACT LINE RIGHT HERE 👇
+        full_prompt = f"{system_instruction}\n\nHere is the JSON Schema to build:\n{clean_schema_json}"
+        
         response = model.generate_content(full_prompt)
         
-        # 4. Clean the output (AI stubbornly adds markdown backticks sometimes)
-        raw_code = response.text.strip()
-        if raw_code.startswith("```"):
-            # Find the first newline to strip the ```javascript or ```python tag
-            first_newline = raw_code.find('\n')
-            if first_newline != -1:
-                raw_code = raw_code[first_newline+1:]
-        if raw_code.endswith("```"):
-            raw_code = raw_code[:-3]
+        # 4. Clean and parse the AI JSON output
+        raw_text = response.text.strip()
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:]
+        elif raw_text.startswith("```"):
+            raw_text = raw_text[3:]
+        if raw_text.endswith("```"):
+            raw_text = raw_text[:-3]
+            
+        generated_data = json.loads(raw_text.strip())
+        
+        # 5. Create the Ultimate ZIP Bundle
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            zip_file.writestr("backend/server.js", generated_data.get("backend_code", "// Error generating backend"))
+            zip_file.writestr("backend/package.json", generated_data.get("package_json", "{}"))
+            
+            # Create a template .env file for them!
+            env_template = "DB_HOST=your_aws_endpoint\nDB_PORT=3306\nDB_USER=dbadmin\nDB_PASSWORD=CloudCanvasPassword123!\nDB_NAME=my_cloud_app\nJWT_SECRET=super_secret_key"
+            zip_file.writestr("backend/.env", env_template)
+            
+            zip_file.writestr("frontend/api-client.js", generated_data.get("frontend_code", "// Error generating frontend"))
+            
+            readme_text = "CLOUD CANVAS BUNDLE\n\n1. cd into 'backend' and run 'npm install'.\n2. Update the '.env' file with your AWS endpoint.\n3. Run 'node server.js'.\n4. Drop 'api-client.js' into your React frontend to connect!"
+            zip_file.writestr("README.txt", readme_text)
+
+        zip_buffer.seek(0)
+        zip_base64 = base64.b64encode(zip_buffer.read()).decode("utf-8")
             
         return {
             "status": "success", 
-            "code": raw_code.strip(),
-            "filename": "server.js" if request.framework == "express" else "main.py"
+            "zip_base64": zip_base64,
+            "filename": "cloudcanvas_fullstack_bundle.zip"
         }
 
     except Exception as e:
@@ -745,7 +833,7 @@ import time
 async def get_real_metrics(endpoint: str, engine: str):
     # Using the exact credentials your AWS deployer used
     master_user = 'dbadmin'
-    master_pass = 'TempPassword123!'
+    master_pass = 'CloudCanvasPassword123!'
     
     metrics = {
         "latency_ms": 0,
@@ -805,7 +893,7 @@ class MigrationExecutionRequest(BaseModel):
 @app.post("/api/cloud/execute-migration")
 async def execute_live_migration(request: MigrationExecutionRequest):
     master_user = 'dbadmin'
-    master_pass = 'TempPassword123!'
+    master_pass = 'CloudCanvasPassword123!'
     engine = request.db_engine.lower()
     
     if not request.sql_statements:

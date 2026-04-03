@@ -147,21 +147,54 @@ const CloudDashboard = ({ dbMode, isSecOpsMode, setIsSecOpsMode, isUnderAttack, 
     setIsEstimating(false);
   };
 
-  // ⚡ CRUD API GENERATOR LOGIC
+  // ⚡ FULL-STACK ZIP GENERATOR LOGIC
   const downloadCrudApi = async () => {
     if (!nodes || nodes.length === 0) { alert("Please add some tables to the canvas first!"); return; }
-    setIsGeneratingCrud(true); setStatus(`Generating ${crudFramework === 'express' ? 'Node.js' : 'FastAPI'} backend...`);
+    
+    setIsGeneratingCrud(true); 
+    setStatus(`Generating Full-Stack Bundle (.zip)...`);
+    
     try {
-      const response = await fetch('http://localhost:8000/api/generate-crud', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ framework: crudFramework, nodes: nodes }) });
+      const response = await fetch('http://localhost:8000/api/generate-crud', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        // Temporarily hardcoding "mysql" instead of using a variable
+body: JSON.stringify({ framework: crudFramework, db_engine: "mysql", nodes: nodes })
+      });
+      
       const data = await response.json();
+      
       if (data.status === 'success') {
-        const blob = new Blob([data.code], { type: 'text/plain' });
+        // 1. Decode the Base64 string back into binary data
+        const byteCharacters = atob(data.zip_base64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        
+        // 2. Create a physical Blob from the binary data
+        const blob = new Blob([byteArray], { type: 'application/zip' });
+        
+        // 3. Trigger the browser download
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url; a.download = data.filename;
-        document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-        setStatus(`✅ ${data.filename} generated successfully!`);
-      } else { alert("Generator Error: " + data.message); setStatus("Generation failed."); }
-    } catch (error) { alert("Could not connect to API Generator."); setStatus("Generation failed."); }
+        const a = document.createElement('a'); 
+        a.href = url; 
+        a.download = data.filename;
+        document.body.appendChild(a); 
+        a.click(); 
+        document.body.removeChild(a); 
+        URL.revokeObjectURL(url);
+        
+        setStatus(`✅ Full-Stack Bundle downloaded successfully!`);
+      } else { 
+        alert("Generator Error: " + data.message); 
+        setStatus("Generation failed."); 
+      }
+    } catch (error) { 
+      alert("Could not connect to API Generator."); 
+      setStatus("Generation failed."); 
+    }
     setIsGeneratingCrud(false);
   };
 

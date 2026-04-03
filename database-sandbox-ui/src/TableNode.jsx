@@ -1,62 +1,63 @@
-import { Handle, Position } from 'reactflow';
+import React from 'react';
+// 1. IMPORT `useReactFlow` from reactflow
+import { Handle, Position, useReactFlow } from 'reactflow'; 
 
-export default function TableNode({ data }) {
-  // Dynamic styling based on whether the system is under attack
-  const isHacked = data.isUnderAttack;
+const TableNode = ({ id, data }) => {
+  // 2. GRAB THE `setNodes` FUNCTION
+  const { setNodes } = useReactFlow(); 
+
+  // 3. THE MAGIC UPDATE FUNCTION
+  const handleAuthToggle = (e) => {
+    const isChecked = e.target.checked;
+    
+    // This safely reaches up to the main dashboard and updates this specific node
+    setNodes((nds) => 
+      nds.map((node) => {
+        if (node.id === id) {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              requireAuth: isChecked // <-- Saves the checkmark!
+            }
+          };
+        }
+        return node;
+      })
+    );
+  };
 
   return (
-    <div style={{
-      background: isHacked ? '#fee2e2' : 'white', // Turns light red if attacked
-      border: `2px solid ${isHacked ? '#ef4444' : (data.schema?.db_mode === 'dynamodb' ? '#8b5cf6' : '#3b82f6')}`,
-      borderRadius: '8px',
-      minWidth: '180px',
-      boxShadow: isHacked ? '0 0 20px rgba(239, 68, 68, 0.8)' : '0 4px 6px rgba(0,0,0,0.1)',
-      transition: 'all 0.3s ease'
-    }}>
-      <Handle type="target" position={Position.Top} style={{ background: '#555' }} />
+    <div style={{ backgroundColor: 'white', borderRadius: '8px', border: '1px solid #3b82f6', overflow: 'hidden', minWidth: '150px' }}>
       
-      {/* Header */}
-      <div style={{ 
-        background: isHacked ? '#ef4444' : (data.schema?.db_mode === 'dynamodb' ? '#8b5cf6' : '#3b82f6'), 
-        color: 'white', padding: '8px', borderTopLeftRadius: '6px', borderTopRightRadius: '6px', fontWeight: 'bold', textAlign: 'center' 
-      }}>
-        {data.label}
+      {/* --- YOUR EXISTING TABLE HEADER --- */}
+      <div style={{ backgroundColor: '#3b82f6', color: 'white', padding: '8px', textAlign: 'center', fontWeight: 'bold' }}>
+        {data.label || data.schema?.name || 'Table'}
       </div>
-      
-      {/* Columns */}
+
+      {/* --- THE NEW BULLETPROOF CHECKBOX --- */}
+      <div className="nodrag" style={{ padding: '8px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#475569' }}>
+        <input 
+          type="checkbox" 
+          id={`auth-${id}`}
+          checked={data.requireAuth || false} 
+          onChange={handleAuthToggle} // <-- Uses our new magic function
+          style={{ cursor: 'pointer', width: '14px', height: '14px' }}
+        />
+        <label htmlFor={`auth-${id}`} style={{ fontWeight: 'bold', cursor: 'pointer', userSelect: 'none', margin: 0 }}>
+          🔒 Require JWT Auth
+        </label>
+      </div>
+
+      {/* --- YOUR EXISTING COLUMNS / ROWS GO HERE --- */}
       <div style={{ padding: '10px' }}>
-        {data.schema?.columns?.map(col => (
-          <div key={col.name} style={{ fontSize: '12px', display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
-            <span style={{ color: isHacked ? '#991b1b' : '#0f172a', fontWeight: 'bold' }}>
-              {col.name} 
-              {col.is_primary_key && <span title="Primary/Partition Key"> 🔑</span>}
-              {col.is_sort_key && <span title="Sort Key"> 🗂️</span>}
-            </span>
-            <span style={{ color: isHacked ? '#b91c1c' : '#64748b' }}>{col.data_type}</span>
-          </div>
-        ))}
-        {(!data.schema?.columns || data.schema.columns.length === 0) && (
-           <div style={{ fontSize: '11px', color: '#94a3b8', textAlign: 'center', fontStyle: 'italic' }}>No attributes yet</div>
-        )}
+         {/* (Keep whatever code you already have here that renders the columns) */}
       </div>
 
-      {/* 🚨 THE VULNERABILITY WARNING BOX 🚨 */}
-      {isHacked && data.vulnerabilityWarning && (
-        <div style={{ background: '#7f1d1d', color: 'white', fontSize: '11px', padding: '8px', borderBottomLeftRadius: '6px', borderBottomRightRadius: '6px', textAlign: 'center', fontWeight: 'bold', animation: 'pulse 1.5s infinite' }}>
-          ⚠️ {data.vulnerabilityWarning}
-        </div>
-      )}
-      
-      <Handle type="source" position={Position.Bottom} style={{ background: '#555' }} />
-
-      {/* CSS Animation for the pulse effect */}
-      <style>{`
-        @keyframes pulse {
-          0% { opacity: 1; }
-          50% { opacity: 0.7; }
-          100% { opacity: 1; }
-        }
-      `}</style>
+      <Handle type="target" position={Position.Top} />
+      <Handle type="source" position={Position.Bottom} />
     </div>
   );
-}
+};
+
+export default TableNode;
